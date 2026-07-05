@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PdfEr.Cli/PdfEr.Cli.csproj" />
+    <Project Path="src/PdfEr.Core/PdfEr.Core.csproj" />
+    <Project Path="src/PdfEr.Infrastructure/PdfEr.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PdfEr.Core.Tests/PdfEr.Core.Tests.csproj" />
+    <Project Path="tests/PdfEr.Infrastructure.Tests/PdfEr.Infrastructure.Tests.csproj" />
+    <Project Path="tests/PdfEr.IntegrationTests/PdfEr.IntegrationTests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,87 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+*.sln.docstates
+*.userprefs
+*.csproj.user
+*.dbmdl
+*.jfm
+*.elevated
+
+## NuGet
+packages/
+*.nupkg
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+*.nuget.props
+*.nuget.targets
+
+## Build artifacts
+artifacts/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+## Test
+*.trx
+*.coverage
+*.coveragexml
+coverage/
+TestResults/
+
+## Visual Studio
+.vs/
+*.sln.ide/
+*.vcxproj.*
+*.pidb
+*.crunchsolution.*
+*.crunchproject.*
+
+## JetBrains Rider
+.idea/
+*.sln.iml
+_ReSharper*/
+*.[Rr]e[Ss]harper
+
+## VS Code
+.vscode/
+*.code-workspace
+
+## OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+
+## Temp
+temp/
+[Tt]emp/
+[Tt]mp/
+*.tmp
+*.log
+
+## Secrets
+appsettings.*.local.json
+secrets.json
+*.user.config
+
+## Node (if used)
+node_modules/
+
+## SourceLink
+*.SourceLink.json
+
+## OpenCode
+.opencode/

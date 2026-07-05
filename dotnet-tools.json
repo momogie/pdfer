@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "isRoot": true,
+  "tools": {
+    "pdfer.tool": {
+      "version": "1.0.0",
+      "commands": [
+        "pdfer"
+      ],
+      "rollForward": false
+    }
+  }
+}
