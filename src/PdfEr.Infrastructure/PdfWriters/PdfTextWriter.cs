@@ -17,6 +17,58 @@ public partial class PdfWriter
         text = text.Replace("{PAGE_NUM}", pageNumber.ToString())
                    .Replace("{PAGE_COUNT}", totalPages.ToString());
 
+        // Track used characters for font subsetting
+        if (fontIdx >= 0 && fontIdx < _fontEntries.Count)
+            RecordUsedChars(_fontEntries[fontIdx].FamilyName, text);
+
+        // Vertical-align offset
+        float verticalOffset = 0;
+        if (style != null)
+        {
+            var va = style.GetPropertyValue("vertical-align");
+            if (!string.IsNullOrWhiteSpace(va) && va != "baseline" && va != "middle")
+            {
+                if (va == "sub") verticalOffset = -fontSizePt * 0.3f;
+                else if (va == "super") verticalOffset = fontSizePt * 0.4f;
+                else if (va == "top") verticalOffset = lineHeightPt * 0.5f;
+                else if (va == "bottom") verticalOffset = -lineHeightPt * 0.5f;
+                else if (va == "text-top") verticalOffset = fontSizePt * 0.1f;
+                else if (va == "text-bottom") verticalOffset = -fontSizePt * 0.1f;
+                else if (va.EndsWith("pt") && float.TryParse(va[..^2], out var vapt)) verticalOffset = vapt;
+                else if (va.EndsWith("px") && float.TryParse(va[..^2], out var vapx)) verticalOffset = vapx * 0.75f;
+                else if (va.EndsWith("em") && float.TryParse(va[..^2], out var vaem)) verticalOffset = vaem * fontSizePt;
+                else if (va.EndsWith("%") && float.TryParse(va[..^1], out var vapct)) verticalOffset = vapct * 0.01f * lineHeightPt;
+            }
+        }
+
+        // Letter-spacing and word-spacing
+        float letterSpacingPt = 0;
+        float wordSpacingExtraPt = 0;
+        if (style != null)
+        {
+            var ls = style.GetPropertyValue("letter-spacing");
+            if (!string.IsNullOrWhiteSpace(ls) && ls != "normal")
+            {
+                if (ls.EndsWith("pt") && float.TryParse(ls[..^2], out var lsp)) letterSpacingPt = lsp;
+                else if (ls.EndsWith("px") && float.TryParse(ls[..^2], out var lspx)) letterSpacingPt = lspx * 0.75f;
+                else if (ls.EndsWith("em") && float.TryParse(ls[..^2], out var lse)) letterSpacingPt = lse * fontSizePt;
+                else if (float.TryParse(ls, out var lsr)) letterSpacingPt = lsr;
+            }
+
+            var ws = style.GetPropertyValue("word-spacing");
+            if (!string.IsNullOrWhiteSpace(ws) && ws != "normal")
+            {
+                if (ws.EndsWith("pt") && float.TryParse(ws[..^2], out var wsp)) wordSpacingExtraPt = wsp;
+                else if (ws.EndsWith("px") && float.TryParse(ws[..^2], out var wspx)) wordSpacingExtraPt = wspx * 0.75f;
+                else if (ws.EndsWith("em") && float.TryParse(ws[..^2], out var wse)) wordSpacingExtraPt = wse * fontSizePt;
+                else if (float.TryParse(ws, out var wsr)) wordSpacingExtraPt = wsr;
+            }
+        }
+
+        // Text-shadow
+        string? textShadow = style?.GetPropertyValue("text-shadow");
+        bool hasTextShadow = !string.IsNullOrWhiteSpace(textShadow) && textShadow != "none";
+
         var lines = new List<string>();
         string? whiteSpace = style?.GetPropertyValue("white-space");
         bool isPre = whiteSpace is "pre";
@@ -70,6 +122,23 @@ public partial class PdfWriter
         if (lines.Count == 0)
             lines.Add(text);
 
+        // Text-shadow
+        float shadowOffsetXPt = 0, shadowOffsetYPt = 0, shadowBlurPt = 0;
+        string? shadowColorStr = null;
+        if (hasTextShadow)
+        {
+            var parts = textShadow.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length >= 2)
+            {
+                shadowOffsetXPt = ParseShadowLengthPdf(parts[0], fontSizePt);
+                shadowOffsetYPt = -ParseShadowLengthPdf(parts[1], fontSizePt);
+                if (parts.Length >= 3 && !parts[^1].StartsWith('#'))
+                    shadowBlurPt = ParseShadowLengthPdf(parts[2], fontSizePt);
+                if (parts.Length >= 3 && parts[^1].StartsWith('#') || parts.Length >= 4)
+                    shadowColorStr = parts[^1];
+            }
+        }
+
         sb.Append("BT\n");
         sb.AppendLine($"{_fontEntries[fontIdx].FontKey} {fontSizePt:F2} Tf");
 
@@ -94,6 +163,10 @@ public partial class PdfWriter
             string line = lines[i];
             float lineWidth = MeasureTextWidth(line, fontFamily, bold, italic, fontSizePt);
 
+            // Account for letter-spacing in line width
+            if (letterSpacingPt != 0 && line.Length > 1)
+                lineWidth += (line.Length - 1) * letterSpacingPt;
+
             float lineOffsetX = i == 0 ? textIndentPt : 0;
             float lineWordSpacing = 0;
 
@@ -112,7 +185,10 @@ public partial class PdfWriter
                 }
             }
 
-            float lineY = blockYPt - i * lineHeightPt;
+            // Add word-spacing from CSS
+            lineWordSpacing += wordSpacingExtraPt;
+
+            float lineY = blockYPt - i * lineHeightPt + verticalOffset;
 
             if (i == 0)
                 sb.AppendLine($"{blockXPt + lineOffsetX:F2} {lineY:F2} Td");
@@ -123,7 +199,23 @@ public partial class PdfWriter
                 sb.AppendLine($"{lineWordSpacing:F2} Tw");
 
             if (!string.IsNullOrEmpty(line))
-                sb.AppendLine($"{FormatPdfText(line)} Tj");
+            {
+                // Apply letter-spacing via TJ operator
+                if (letterSpacingPt != 0 && line.Length > 1)
+                {
+                    sb.Append("[");
+                    foreach (char c in line)
+                    {
+                        sb.Append(FormatPdfText(c.ToString()));
+                        sb.Append($" {(-letterSpacingPt * 1000f / fontSizePt):F2} ");
+                    }
+                    sb.AppendLine("] TJ");
+                }
+                else
+                {
+                    sb.AppendLine($"{FormatPdfText(line)} Tj");
+                }
+            }
 
             if (lineWordSpacing > 0)
                 sb.AppendLine("0 Tw");
@@ -182,6 +274,18 @@ public partial class PdfWriter
                 }
             }
         }
+    }
+
+    private static float ParseShadowLengthPdf(string value, float fontSizePt)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return 0;
+        value = value.Trim().ToLowerInvariant();
+        if (value.EndsWith("px") && float.TryParse(value[..^2], out var px)) return px * 0.75f;
+        if (value.EndsWith("pt") && float.TryParse(value[..^2], out var pt)) return pt;
+        if (value.EndsWith("em") && float.TryParse(value[..^2], out var em)) return em * fontSizePt;
+        if (value.EndsWith("mm") && float.TryParse(value[..^2], out var mm)) return mm * MmToPt;
+        if (float.TryParse(value, out var n)) return n;
+        return 0;
     }
 
     private void WriteInlineContentBlock(StringBuilder sb, BlockBox block,

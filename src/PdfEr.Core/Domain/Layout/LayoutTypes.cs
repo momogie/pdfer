@@ -23,6 +23,8 @@ public sealed class PageLayout
     public HeaderFooterBox? Footer { get; set; }
     public int PageNumber { get; set; }
     public string? PageName { get; set; }
+    public string? PageLabelPrefix { get; set; }
+    public string? PageLabelStyle { get; set; }
 
     public PageLayout(PageSize size, PageOrientation orientation, DocumentMargins margins, int pageNumber)
     {
@@ -79,6 +81,18 @@ public sealed class BlockBox
     public float BorderBottom { get; set; }
     public float BorderLeft { get; set; }
     public float BorderRight { get; set; }
+    public string? LinkUrl { get; set; }
+    public string? AnchorName { get; set; }
+    public float Opacity { get; set; } = 1f;
+    public float MinWidth { get; set; }
+    public float MaxWidth { get; set; }
+    public float MinHeight { get; set; }
+    public float MaxHeight { get; set; }
+    public string? FlexDirection { get; set; }
+    public string? JustifyContent { get; set; }
+    public string? AlignItems { get; set; }
+    public float FlexGap { get; set; }
+    public string? FlexWrap { get; set; }
 
     public float ContentWidth => Width - PaddingLeft - PaddingRight - BorderLeft - BorderRight;
     public float ContentHeight => Height - PaddingTop - PaddingBottom - BorderTop - BorderBottom;
@@ -96,7 +110,8 @@ public enum BlockBoxType
     Table,
     TableRow,
     TableCell,
-    InlineBlock
+    InlineBlock,
+    FlexContainer
 }
 
 public sealed class InlineBox

@@ -16,7 +16,7 @@ public partial class PdfWriter
 {
     private readonly PdfBuffer _buffer = new();
     private int _nextObjectNumber = 1;
-    private readonly List<long> _objectOffsets = new();
+    private readonly Dictionary<int, long> _objectOffsets = new();
     private long _currentOffset;
     private PdfMetadata? _metadata;
     private PdfEncryptionOptions? _encryption;
@@ -29,6 +29,16 @@ public partial class PdfWriter
 
     private readonly List<FontEntry> _fontEntries = new();
     private readonly Dictionary<string, int> _fontKeyToIndex = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, HashSet<int>> _fontUsedChars = new();
+
+    private struct LinkAnnotation
+    {
+        public float Left;
+        public float Bottom;
+        public float Right;
+        public float Top;
+        public string Url;
+    }
 
     internal const float MmToPt = 72f / 25.4f;
 
@@ -58,6 +68,7 @@ public partial class PdfWriter
         _pageRefs.Clear();
         _fontEntries.Clear();
         _fontKeyToIndex.Clear();
+        _fontUsedChars.Clear();
         _metadata = new PdfMetadata { Title = config.Title ?? "Document" };
         _encryption = null;
 
@@ -67,33 +78,73 @@ public partial class PdfWriter
         var pageFontIndices = new List<List<int>>();
         var pageImageRefs = new List<List<(string Name, int ObjNum)>>();
         var pageOpacities = new List<List<float>>();
+        var pageLinkAnnots = new List<List<LinkAnnotation>>();
+        var pageNamedAnchors = new List<Dictionary<string, (float y, float pageH, float marginTop)>>();
 
         foreach (var page in layout.Pages)
         {
             var usedFonts = new List<int>();
             var images = new List<(string Name, int ObjNum)>();
             var usedOpacs = new List<float>();
-            var contentNum = WriteBlockContentStream(page, config, usedFonts, images, usedOpacs, layout.Pages.Count);
+            var linkAnnots = new List<LinkAnnotation>();
+            var namedAnchors = new Dictionary<string, (float y, float pageH, float marginTop)>();
+            var contentNum = WriteBlockContentStream(page, config, usedFonts, images, usedOpacs, layout.Pages.Count, linkAnnots, namedAnchors);
             contentNums.Add(contentNum);
             pageFontIndices.Add(usedFonts);
             pageImageRefs.Add(images);
             pageOpacities.Add(usedOpacs);
+            pageLinkAnnots.Add(linkAnnots);
+            pageNamedAnchors.Add(namedAnchors);
         }
 
         WriteAllFontObjects();
 
+        // Write link annotation objects per page
+        var linkAnnotObjNums = new List<List<int>>();
+        foreach (var annots in pageLinkAnnots)
+        {
+            var objNums = new List<int>();
+            foreach (var annot in annots)
+            {
+                var objNum = AllocateObjectNumber();
+                RecordObjectOffset(objNum);
+                _buffer.AppendLine($"{objNum} 0 obj");
+                _buffer.AppendLine("<< /Type /Annot /Subtype /Link");
+                _buffer.AppendLine($"   /Rect [{annot.Left:F2} {annot.Bottom:F2} {annot.Right:F2} {annot.Top:F2}]");
+                _buffer.AppendLine($"   /Border [0 0 0]");
+                string escapedUrl = EscapePdfString(annot.Url);
+                _buffer.AppendLine($"   /A << /Type /Action /S /URI /URI ({escapedUrl}) >>");
+                _buffer.AppendLine(">>");
+                _buffer.AppendLine("endobj");
+                objNums.Add(objNum);
+            }
+            linkAnnotObjNums.Add(objNums);
+        }
+
+        // Pre-allocate all page object numbers
         var pageNums = new List<int>();
-        RecordObjectOffset();
+        for (int i = 0; i < layout.Pages.Count; i++)
+        {
+            var pageNum = AllocateObjectNumber();
+            pageNums.Add(pageNum);
+            _pageRefs.Add(pageNum);
+        }
+
+        // Build bookmarks from layout headings
+        var bookmarks = BuildBookmarks(layout);
+        int? bookmarkRootNum = null;
+        if (bookmarks.Count > 0)
+            bookmarkRootNum = WriteBookmarks(bookmarks);
+
         var pagesRootRef = AllocateObjectNumber();
+        RecordObjectOffset(pagesRootRef);
         _buffer.AppendLine($"{pagesRootRef} 0 obj");
         _buffer.AppendLine("<< /Type /Pages");
         _buffer.Append("   /Kids [");
         for (int i = 0; i < layout.Pages.Count; i++)
         {
             if (i > 0) _buffer.Append(" ");
-            var pageNum = AllocateObjectNumber();
-            pageNums.Add(pageNum);
-            _buffer.Append($"{pageNum} 0 R");
+            _buffer.Append($"{pageNums[i]} 0 R");
         }
         _buffer.AppendLine("]");
         _buffer.AppendLine($"   /Count {layout.Pages.Count}");
@@ -106,7 +157,7 @@ public partial class PdfWriter
             var pageW = page.Size.WidthMillimeters * MmToPt;
             var pageH = page.Size.HeightMillimeters * MmToPt;
 
-            RecordObjectOffset();
+            RecordObjectOffset(pageNums[i]);
             _buffer.AppendLine($"{pageNums[i]} 0 obj");
             _buffer.AppendLine("<< /Type /Page");
             _buffer.AppendLine($"   /Parent {pagesRootRef} 0 R");
@@ -118,20 +169,71 @@ public partial class PdfWriter
             var xObjectResources = BuildXObjectDict(pageImageRefs[i]);
             var extGStateResources = BuildExtGStateDict(pageOpacities[i]);
             _buffer.AppendLine($"   /Resources << /Font << {fontResources} >> {xObjectResources} {extGStateResources}>>");
+
+            // Add link annotations if any
+            var annots = linkAnnotObjNums[i];
+            if (annots.Count > 0)
+            {
+                var annotRefs = string.Join(" ", annots.Select(a => $"{a} 0 R"));
+                _buffer.AppendLine($"   /Annots [{annotRefs}]");
+            }
+
             _buffer.AppendLine(">>");
             _buffer.AppendLine("endobj");
-
-            _pageRefs.Add(pageNums[i]);
         }
+
+        // Write page labels
+        int pageLabelsNum = 0;
+        if (layout.Pages.Any(p => !string.IsNullOrWhiteSpace(p.PageLabelPrefix) || !string.IsNullOrWhiteSpace(p.PageLabelStyle)))
+            pageLabelsNum = WritePageLabels(layout.Pages);
 
         string title = config.Title ?? "Document";
         var infoRef = WriteDocumentInfo(title);
-        var catalogRef = WriteCatalog(pagesRootRef, 0, infoRef, 0, null);
+        var catalogRef = WriteCatalog(pagesRootRef, 0, infoRef, 0, bookmarkRootNum, pageLabelsNum > 0 ? pageLabelsNum : null);
 
         WriteXRefTable();
         WriteTrailer(catalogRef, infoRef);
 
         return _buffer.ToByteArray();
+    }
+
+    private static List<BookmarkNode> BuildBookmarks(DocumentLayout layout)
+    {
+        var bookmarks = new List<BookmarkNode>();
+        foreach (var page in layout.Pages)
+        {
+            foreach (var block in page.Blocks)
+            {
+                if (block.TagName is "h1" or "h2" or "h3" or "h4" or "h5" or "h6"
+                    && !string.IsNullOrWhiteSpace(block.TextContent))
+                {
+                    var level = block.TagName[1] - '0';
+                    var node = new BookmarkNode
+                    {
+                        Title = block.TextContent.Trim(),
+                        PageNumber = page.PageNumber,
+                        PageX = 0,
+                        PageY = block.Y
+                    };
+
+                    // Insert into hierarchy by level
+                    InsertBookmark(bookmarks, node, level, 1);
+                }
+            }
+        }
+        return bookmarks;
+    }
+
+    private static void InsertBookmark(List<BookmarkNode> siblings, BookmarkNode node, int level, int currentLevel)
+    {
+        if (level <= currentLevel || siblings.Count == 0)
+        {
+            siblings.Add(node);
+            return;
+        }
+
+        var last = siblings[^1];
+        InsertBookmark(last.Children, node, level, currentLevel + 1);
     }
 
     internal string BuildFontResourcesDict(List<int> fontIndices)
@@ -261,13 +363,13 @@ public partial class PdfWriter
             _ => "1.7"
         };
         _buffer.AppendLine($"%PDF-{_pdfVersion}");
-        _buffer.AppendLine("%\u00e2\u00e3\u00cf\u00d3");
+        _buffer.Append(new byte[] { (byte)'%', 0xe2, 0xe3, 0xcf, 0xd3, (byte)'\n' });
     }
 
     private int WritePagesRoot()
     {
-        RecordObjectOffset();
         var num = AllocateObjectNumber();
+        RecordObjectOffset(num);
         _buffer.AppendLine($"{num} 0 obj");
         _buffer.AppendLine("<< /Type /Pages");
         _buffer.AppendLine("   /Kids []");
@@ -279,8 +381,8 @@ public partial class PdfWriter
 
     private int WritePage(int parentRef, string textContent)
     {
-        RecordObjectOffset();
         var num = AllocateObjectNumber();
+        RecordObjectOffset(num);
         var contentNum = WriteContentStream(textContent);
 
         _buffer.AppendLine($"{num} 0 obj");
@@ -309,16 +411,17 @@ public partial class PdfWriter
 
     public int WriteContentStream(string textContent)
     {
-        RecordObjectOffset();
         var num = AllocateObjectNumber();
+        RecordObjectOffset(num);
         var formatted = FormatPdfText(textContent);
 
         var stream = $"BT\n/F1 12 Tf\n72 800 Td\n{formatted} Tj\nET\n";
+        var streamBytes = Encoding.ASCII.GetBytes(stream);
 
         _buffer.AppendLine($"{num} 0 obj");
-        _buffer.AppendLine("<< /Length " + stream.Length + " >>");
+        _buffer.AppendLine("<< /Length " + streamBytes.Length + " >>");
         _buffer.AppendLine("stream");
-        _buffer.Append(stream);
+        _buffer.Append(streamBytes);
         _buffer.AppendLine();
         _buffer.AppendLine("endstream");
         _buffer.AppendLine("endobj");
@@ -337,8 +440,8 @@ public partial class PdfWriter
             {
                 var compressed = DeflateCompress(entry.FontDef.FontData);
 
-                RecordObjectOffset();
                 var fontFileNum = AllocateObjectNumber();
+                RecordObjectOffset(fontFileNum);
                 _buffer.AppendLine($"{fontFileNum} 0 obj");
                 _buffer.AppendLine($"<< /Length {compressed.Length} /Length1 {entry.FontDef.FontData.Length} /Filter /FlateDecode >>");
                 _buffer.AppendLine("stream");
@@ -347,8 +450,8 @@ public partial class PdfWriter
                 _buffer.AppendLine("endstream");
                 _buffer.AppendLine("endobj");
 
-                RecordObjectOffset();
                 var descriptorNum = AllocateObjectNumber();
+                RecordObjectOffset(descriptorNum);
                 _buffer.AppendLine($"{descriptorNum} 0 obj");
                 _buffer.AppendLine("<< /Type /FontDescriptor");
                 _buffer.AppendLine($"   /FontName /{EscapePdfString(entry.FamilyName)}");
@@ -362,8 +465,8 @@ public partial class PdfWriter
                 _buffer.AppendLine(">>");
                 _buffer.AppendLine("endobj");
 
-                RecordObjectOffset();
                 var fontObjNum = AllocateObjectNumber();
+                RecordObjectOffset(fontObjNum);
                 _buffer.AppendLine($"{fontObjNum} 0 obj");
                 _buffer.AppendLine("<< /Type /Font /Subtype /TrueType");
                 _buffer.AppendLine($"   /BaseFont /{EscapePdfString(entry.FamilyName)}");
@@ -399,8 +502,8 @@ public partial class PdfWriter
                 else if (entry.Style == FontStyle.Italic) baseFont += "-Oblique";
                 else if (entry.Style == FontStyle.BoldItalic) baseFont += "-BoldOblique";
 
-                RecordObjectOffset();
                 var num = AllocateObjectNumber();
+                RecordObjectOffset(num);
                 _buffer.AppendLine($"{num} 0 obj");
                 _buffer.AppendLine($"<< /Type /Font /Subtype /Type1 /BaseFont /{baseFont} >>");
                 _buffer.AppendLine("endobj");
@@ -422,8 +525,8 @@ public partial class PdfWriter
 
     private int WriteFontResource()
     {
-        RecordObjectOffset();
         var num = AllocateObjectNumber();
+        RecordObjectOffset(num);
         _buffer.AppendLine($"{num} 0 obj");
         _buffer.AppendLine("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
         _buffer.AppendLine("endobj");
@@ -436,7 +539,6 @@ public partial class PdfWriter
         if (_fontObjects.TryGetValue(fontName, out var existing))
             return existing;
 
-        RecordObjectOffset();
         var num = AllocateObjectNumber();
         var descriptorNum = AllocateObjectNumber();
         var fontFileNum = AllocateObjectNumber();
@@ -445,7 +547,7 @@ public partial class PdfWriter
         {
             var compressed = DeflateCompress(fontData);
 
-            RecordObjectOffset();
+            RecordObjectOffset(fontFileNum);
             _buffer.AppendLine($"{fontFileNum} 0 obj");
             _buffer.AppendLine($"<< /Length {compressed.Length} /Length1 {fontData.Length} /Filter /FlateDecode >>");
             _buffer.AppendLine("stream");
@@ -455,7 +557,7 @@ public partial class PdfWriter
             _buffer.AppendLine("endobj");
         }
 
-        RecordObjectOffset();
+        RecordObjectOffset(descriptorNum);
         _buffer.AppendLine($"{descriptorNum} 0 obj");
         _buffer.AppendLine("<< /Type /FontDescriptor");
         _buffer.AppendLine($"   /FontName /{EscapePdfString(fontName)}");
@@ -470,7 +572,7 @@ public partial class PdfWriter
         _buffer.AppendLine(">>");
         _buffer.AppendLine("endobj");
 
-        RecordObjectOffset();
+        RecordObjectOffset(num);
         _buffer.AppendLine($"{num} 0 obj");
         _buffer.AppendLine("<< /Type /Font /Subtype /TrueType");
         _buffer.AppendLine($"   /BaseFont /{EscapePdfString(fontName)}");
@@ -481,8 +583,62 @@ public partial class PdfWriter
         _buffer.AppendLine(">>");
         _buffer.AppendLine("endobj");
 
-        _fontObjects[fontName] = num;
+            _fontObjects[fontName] = num;
+
+            // Generate ToUnicode CMap for subsetted font
+            if (_fontUsedChars.TryGetValue(fontName, out var usedChars) && usedChars.Count > 0)
+            {
+                var cmapBuilder = new System.Text.StringBuilder();
+                cmapBuilder.AppendLine("/CIDInit /ProcSet findresource begin");
+                cmapBuilder.AppendLine("12 dict begin");
+                cmapBuilder.AppendLine("begincmap");
+                cmapBuilder.AppendLine("/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def");
+                cmapBuilder.AppendLine("/CMapName /Adobe-Identity-UCS def");
+                cmapBuilder.AppendLine("/CMapType 2 def");
+                cmapBuilder.AppendLine("1 begincodespacerange");
+                cmapBuilder.AppendLine("<00> <FF>");
+                cmapBuilder.AppendLine("endcodespacerange");
+                cmapBuilder.AppendLine($"{usedChars.Count} beginbfchar");
+
+                int code = 32;
+                foreach (var ch in usedChars.OrderBy(c => c))
+                {
+                    cmapBuilder.AppendLine($"<{code:X2}> <{ch:X4}>");
+                    code++;
+                    if (code > 255) break;
+                }
+
+                cmapBuilder.AppendLine("endbfchar");
+                cmapBuilder.AppendLine("endcmap");
+                cmapBuilder.AppendLine("CMapName currentdict /CMap defineresource pop");
+                cmapBuilder.AppendLine("end");
+                cmapBuilder.AppendLine("end");
+
+                var cmapBytes = Encoding.ASCII.GetBytes(cmapBuilder.ToString());
+
+                var toUnicodeNum = AllocateObjectNumber();
+                RecordObjectOffset(toUnicodeNum);
+                _buffer.AppendLine($"{toUnicodeNum} 0 obj");
+                _buffer.AppendLine($"<< /Length {cmapBytes.Length} >>");
+                _buffer.AppendLine("stream");
+                _buffer.Append(cmapBytes);
+                _buffer.AppendLine("endstream");
+                _buffer.AppendLine("endobj");
+
+                _buffer.AppendLine($"   /ToUnicode {toUnicodeNum} 0 R");
+            }
+
         return num;
+    }
+
+    public void RecordUsedChars(string fontName, string text)
+    {
+        if (string.IsNullOrEmpty(fontName) || string.IsNullOrEmpty(text))
+            return;
+        if (!_fontUsedChars.ContainsKey(fontName))
+            _fontUsedChars[fontName] = new HashSet<int>();
+        foreach (char c in text)
+            _fontUsedChars[fontName].Add(c);
     }
 
     public int WriteImage(string imageName, byte[] imageData, int width, int height)
@@ -490,8 +646,8 @@ public partial class PdfWriter
         if (_imageObjects.TryGetValue(imageName, out var existing))
             return existing;
 
-        RecordObjectOffset();
         var num = AllocateObjectNumber();
+        RecordObjectOffset(num);
 
         _buffer.AppendLine($"{num} 0 obj");
         _buffer.AppendLine("<< /Type /XObject /Subtype /Image");
@@ -513,8 +669,8 @@ public partial class PdfWriter
 
     private int WriteDocumentInfo(string title)
     {
-        RecordObjectOffset();
         var num = AllocateObjectNumber();
+        RecordObjectOffset(num);
         var now = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
 
         _buffer.AppendLine($"{num} 0 obj");
@@ -532,10 +688,10 @@ public partial class PdfWriter
         return num;
     }
 
-    private int WriteCatalog(int pagesRoot, int fontRef, int infoRef, int formObj = 0, int? bookmarkRoot = null)
+    internal int WriteCatalog(int pagesRoot, int fontRef, int infoRef, int formObj = 0, int? bookmarkRoot = null, int? pageLabelsObj = null)
     {
-        RecordObjectOffset();
         var num = AllocateObjectNumber();
+        RecordObjectOffset(num);
         _buffer.AppendLine($"{num} 0 obj");
         _buffer.AppendLine("<< /Type /Catalog");
         _buffer.AppendLine($"   /Pages {pagesRoot} 0 R");
@@ -543,6 +699,9 @@ public partial class PdfWriter
 
         if (bookmarkRoot.HasValue)
             _buffer.AppendLine($"   /Outlines {bookmarkRoot.Value} 0 R");
+
+        if (pageLabelsObj.HasValue)
+            _buffer.AppendLine($"   /PageLabels {pageLabelsObj.Value} 0 R");
 
         if (formObj > 0)
             _buffer.AppendLine($"   /AcroForm {formObj} 0 R");
@@ -554,8 +713,8 @@ public partial class PdfWriter
 
     private int WriteFormStructure(FormDefinition form)
     {
-        RecordObjectOffset();
         var num = AllocateObjectNumber();
+        RecordObjectOffset(num);
         int[] fieldRefs = new int[form.Fields.Count];
 
         for (int i = 0; i < form.Fields.Count; i++)
@@ -575,8 +734,8 @@ public partial class PdfWriter
 
     private int WriteFormField(FormField field)
     {
-        RecordObjectOffset();
         var num = AllocateObjectNumber();
+        RecordObjectOffset(num);
 
         string ft = field.Type switch
         {
@@ -617,8 +776,8 @@ public partial class PdfWriter
 
     private int WriteBookmarks(IReadOnlyList<BookmarkNode> bookmarks)
     {
-        RecordObjectOffset();
         var rootNum = AllocateObjectNumber();
+        RecordObjectOffset(rootNum);
 
         var allNodes = new List<(BookmarkNode node, int objNum, int parentNum, int prevNum, int nextNum)>();
         int firstNum = 0, lastNum = 0;
@@ -660,11 +819,13 @@ public partial class PdfWriter
 
         foreach (var (node, objNum, parentNum, prevNum, nextNum) in allNodes)
         {
-            RecordObjectOffset();
+            RecordObjectOffset(objNum);
+            int pageRef = node.PageNumber > 0 && node.PageNumber <= _pageRefs.Count
+                ? _pageRefs[node.PageNumber - 1] : _pageRefs[0];
             _buffer.AppendLine($"{objNum} 0 obj");
             _buffer.AppendLine("<< /Title " + FormatPdfText(node.Title) + "");
             _buffer.AppendLine("   /Parent " + parentNum + " 0 R");
-            _buffer.AppendLine("   /Dest [" + _pageRefs[0] + " 0 R /XYZ " + node.PageX.ToString("F0") + " " + node.PageY.ToString("F0") + " 0]");
+            _buffer.AppendLine("   /Dest [" + pageRef + " 0 R /XYZ " + node.PageX.ToString("F0") + " " + node.PageY.ToString("F0") + " 0]");
             if (prevNum > 0) _buffer.AppendLine("   /Prev " + prevNum + " 0 R");
             if (nextNum > 0) _buffer.AppendLine("   /Next " + nextNum + " 0 R");
             _buffer.AppendLine(">>");
@@ -674,10 +835,41 @@ public partial class PdfWriter
         return rootNum;
     }
 
+    private int WritePageLabels(IReadOnlyList<PageLayout> pages)
+    {
+        var num = AllocateObjectNumber();
+        RecordObjectOffset(num);
+
+        _buffer.AppendLine($"{num} 0 obj");
+        _buffer.AppendLine("<< /Nums [");
+        int startIdx = 0;
+        for (int i = 0; i < pages.Count; i++)
+        {
+            var page = pages[i];
+            bool hasPrefix = !string.IsNullOrWhiteSpace(page.PageLabelPrefix);
+            bool hasStyle = !string.IsNullOrWhiteSpace(page.PageLabelStyle);
+            if (!hasPrefix && !hasStyle)
+                continue;
+
+            _buffer.AppendLine($"   {startIdx}");
+            _buffer.Append("   << ");
+            if (hasStyle)
+                _buffer.Append($"/S /{page.PageLabelStyle} ");
+            if (hasPrefix)
+                _buffer.Append($"/P ({EscapePdfString(page.PageLabelPrefix!)}) ");
+            _buffer.AppendLine(">>");
+            startIdx = i + 1;
+        }
+        _buffer.AppendLine("]");
+        _buffer.AppendLine(">>");
+        _buffer.AppendLine("endobj");
+        return num;
+    }
+
     private void WriteEncryptionDictionary(PdfEncryptionOptions options)
     {
-        RecordObjectOffset();
         var num = AllocateObjectNumber();
+        RecordObjectOffset(num);
 
         string filter =
             options.Level == EncryptionLevel.Aes40 ? "/V 2 /R 3 /Length 40" :
@@ -698,8 +890,13 @@ public partial class PdfWriter
         _buffer.AppendLine("xref");
         _buffer.AppendLine($"0 {_nextObjectNumber}");
         _buffer.AppendLine("0000000000 65535 f ");
-        foreach (var offset in _objectOffsets)
-            _buffer.AppendLine($"{offset:D10} 00000 n ");
+        for (int i = 1; i < _nextObjectNumber; i++)
+        {
+            if (_objectOffsets.TryGetValue(i, out var offset))
+                _buffer.AppendLine($"{offset:D10} 00000 n ");
+            else
+                _buffer.AppendLine("0000000000 00000 n ");
+        }
     }
 
     private void WriteTrailer(int catalogRef, int infoRef)
@@ -711,10 +908,10 @@ public partial class PdfWriter
         _buffer.AppendLine("%%EOF");
     }
 
-    private void RecordObjectOffset()
+    private void RecordObjectOffset(int objectNumber)
     {
         _currentOffset = _buffer.Length;
-        _objectOffsets.Add(_currentOffset);
+        _objectOffsets[objectNumber] = _currentOffset;
     }
 
     internal static string EscapePdfString(string text)

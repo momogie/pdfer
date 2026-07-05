@@ -37,6 +37,7 @@ public static class DependencyInjection
         });
         services.AddSingleton<ITextLayoutEngine, TextLayoutEngine>();
         services.AddSingleton<IImageService, ImageService>();
+        services.AddSingleton<ISvgRasterizer, SvgRasterizer>();
         services.AddSingleton<CssParser>();
         services.AddSingleton<CssMerger>();
         services.AddSingleton<CssNormalizer>();
@@ -71,6 +72,14 @@ public static class DependencyInjection
         services.AddSingleton<ITagHandler, TableRowHandler>();
         services.AddSingleton<ITagHandler, TableCellHandler>();
         services.AddSingleton<ITagHandler, TableSectionHandler>();
+        services.AddSingleton<ITagHandler, CaptionHandler>();
+        services.AddSingleton<ITagHandler, ColgroupHandler>();
+        services.AddSingleton<ITagHandler, FigureHandler>();
+        services.AddSingleton<ITagHandler, FormHandler>();
+        services.AddSingleton<ITagHandler, InputHandler>();
+        services.AddSingleton<ITagHandler, TextareaHandler>();
+        services.AddSingleton<ITagHandler, SelectHandler>();
+        services.AddSingleton<ITagHandler, SvgHandler>();
 
         services.AddSingleton<TagRegistry>();
         services.AddSingleton<PdfWriter>();

@@ -21,6 +21,8 @@ public sealed class LayoutEngine
     public float CurrentY => _currentY;
     public PageLayout CurrentPage => _currentPage;
     private BlockBox? _currentBlockContainer;
+    public BlockBox? CurrentFlexContainer { get; set; }
+    private float _flexChildStartX;
 
     public LayoutEngine(CssMerger cssMerger, CssNormalizer cssNormalizer, IUnitConverter unitConverter)
     {
@@ -162,6 +164,27 @@ public sealed class LayoutEngine
                 box.Width = parsed;
         }
 
+        // min/max-width
+        var cssMinW = styles.GetPropertyValue("min-width");
+        if (!string.IsNullOrWhiteSpace(cssMinW) && cssMinW != "auto")
+        {
+            var parsed = ParseCssLength(cssMinW, _currentPage.ContentBox.Width);
+            if (parsed > 0) box.MinWidth = parsed;
+        }
+        var cssMaxW = styles.GetPropertyValue("max-width");
+        if (!string.IsNullOrWhiteSpace(cssMaxW) && cssMaxW != "none" && cssMaxW != "auto")
+        {
+            var parsed = ParseCssLength(cssMaxW, _currentPage.ContentBox.Width);
+            if (parsed > 0) box.MaxWidth = parsed;
+        }
+        if (box.MinWidth > 0 && box.Width < box.MinWidth) box.Width = box.MinWidth;
+        if (box.MaxWidth > 0 && box.Width > box.MaxWidth) box.Width = box.MaxWidth;
+
+        // Opacity
+        var cssOpacity = styles.GetPropertyValue("opacity");
+        if (!string.IsNullOrWhiteSpace(cssOpacity) && float.TryParse(cssOpacity, out var op) && op >= 0 && op <= 1)
+            box.Opacity = op;
+
         return box;
     }
 
@@ -171,12 +194,57 @@ public sealed class LayoutEngine
 
         var display = box.ComputedStyle?.GetPropertyValue("display");
         bool isInlineBlock = display == "inline-block";
+        bool isFlex = display == "flex" || display == "inline-flex";
+
+        if (isFlex)
+        {
+            box.Type = BlockBoxType.FlexContainer;
+            box.FlexDirection = box.ComputedStyle?.GetPropertyValue("flex-direction") ?? "row";
+            box.JustifyContent = box.ComputedStyle?.GetPropertyValue("justify-content") ?? "flex-start";
+            box.AlignItems = box.ComputedStyle?.GetPropertyValue("align-items") ?? "stretch";
+            box.FlexWrap = box.ComputedStyle?.GetPropertyValue("flex-wrap") ?? "nowrap";
+
+            var gap = box.ComputedStyle?.GetPropertyValue("gap") ?? box.ComputedStyle?.GetPropertyValue("row-gap");
+            if (!string.IsNullOrWhiteSpace(gap) && gap != "normal")
+                box.FlexGap = ParseCssLength(gap, _currentPage.ContentBox.Width);
+
+            _currentY += box.MarginTop;
+            box.Y = _currentY;
+
+            if (box.Height <= 0)
+                box.Height = 10;
+
+            _currentPage.Blocks.Add(box);
+            _currentBlockContainer = box;
+            BeginFlexContainer(box);
+            return;
+        }
 
         if (isInlineBlock || box.TagName is "h1" or "h2" or "h3" or "h4" or "h5" or "h6" or "p" or "div"
             or "li" or "ul" or "ol" or "blockquote" or "pre" or "section" or "article"
-            or "header" or "footer" or "nav" or "main" or "td" or "th" or "hr" or "img")
+            or "header" or "footer" or "nav" or "main" or "td" or "th" or "hr" or "img" or "caption")
         {
             var fontSize = GetFontSize(box.ComputedStyle);
+
+            // page-break-before
+            var pbBefore = box.ComputedStyle?.GetPropertyValue("page-break-before");
+            if (pbBefore is "always" or "left" or "right")
+            {
+                if (_currentPage.PageNumber > 1 || _document.Pages.Count > 1)
+                    AddNewPage(config, box.ComputedStyle?.GetPropertyValue("page"));
+            }
+
+            // page-break-inside: avoid — if block doesn't fit, break before
+            var pbInside = box.ComputedStyle?.GetPropertyValue("page-break-inside");
+            if (pbInside == "avoid" && box.Height > 0)
+            {
+                float needed = box.MarginTop + box.Height + box.MarginBottom;
+                if (_currentY + needed > _currentPage.ContentBox.Bottom)
+                {
+                    var blockPageName = box.ComputedStyle?.GetPropertyValue("page");
+                    AddNewPage(config, string.IsNullOrWhiteSpace(blockPageName) ? null : blockPageName);
+                }
+            }
 
             if (isInlineBlock)
             {
@@ -213,6 +281,7 @@ public sealed class LayoutEngine
                     {
                         Text = box.TextContent,
                         Type = InlineBoxType.Text,
+                        LinkUrl = box.LinkUrl,
                         X = box.X + box.PaddingLeft + box.BorderLeft,
                         Y = box.Y + box.PaddingTop,
                         Width = box.ContentWidth,
@@ -257,6 +326,22 @@ public sealed class LayoutEngine
                     box.Height = parsed;
             }
 
+            // min/max-height
+            var cssMinH = box.ComputedStyle?.GetPropertyValue("min-height");
+            if (!string.IsNullOrWhiteSpace(cssMinH) && cssMinH != "auto")
+            {
+                var parsed = ParseCssLength(cssMinH, _currentPage.ContentBox.Height);
+                if (parsed > 0) box.MinHeight = parsed;
+            }
+            var cssMaxH = box.ComputedStyle?.GetPropertyValue("max-height");
+            if (!string.IsNullOrWhiteSpace(cssMaxH) && cssMaxH != "none" && cssMaxH != "auto")
+            {
+                var parsed = ParseCssLength(cssMaxH, _currentPage.ContentBox.Height);
+                if (parsed > 0) box.MaxHeight = parsed;
+            }
+            if (box.MinHeight > 0 && box.Height < box.MinHeight) box.Height = box.MinHeight;
+            if (box.MaxHeight > 0 && box.Height > box.MaxHeight) box.Height = box.MaxHeight;
+
             // CSS position support
             var cssPosition = box.ComputedStyle?.GetPropertyValue("position");
             bool isRelative = cssPosition == "relative";
@@ -274,7 +359,6 @@ public sealed class LayoutEngine
             if (isAbsolute)
             {
                 box.Type = BlockBoxType.Absolute;
-                // Position relative to page content box (nearest positioned ancestor)
                 float posX = _currentPage.ContentBox.X;
                 float posY = _currentPage.ContentBox.Y;
                 if (offsetLeft > 0) posX += offsetLeft;
@@ -283,7 +367,6 @@ public sealed class LayoutEngine
                 else if (offsetBottom > 0) posY = _currentPage.ContentBox.Bottom - box.Height - offsetBottom;
                 box.X = posX;
                 box.Y = posY;
-                // Do not advance _currentY — removed from normal flow
             }
 
             if (!string.IsNullOrWhiteSpace(box.TextContent))
@@ -292,6 +375,7 @@ public sealed class LayoutEngine
                 {
                     Text = box.TextContent,
                     Type = InlineBoxType.Text,
+                    LinkUrl = box.LinkUrl,
                     X = box.X + box.PaddingLeft + box.BorderLeft,
                     Y = (isAbsolute ? box.Y : _currentY) + box.PaddingTop,
                     Width = box.ContentWidth,
@@ -317,7 +401,13 @@ public sealed class LayoutEngine
 
             _currentY += box.Height + box.MarginBottom;
 
-            if (_currentY > _currentPage.ContentBox.Bottom)
+            // page-break-after
+            var pbAfter = box.ComputedStyle?.GetPropertyValue("page-break-after");
+            if (pbAfter is "always" or "left" or "right")
+            {
+                AddNewPage(config, box.ComputedStyle?.GetPropertyValue("page"));
+            }
+            else if (_currentY > _currentPage.ContentBox.Bottom)
             {
                 var blockPageName = box.ComputedStyle?.GetPropertyValue("page");
                 AddNewPage(config, string.IsNullOrWhiteSpace(blockPageName) ? null : blockPageName);
@@ -403,6 +493,26 @@ public sealed class LayoutEngine
         }
 
         return ParseLength(value);
+    }
+
+    public void PositionFlexChild(BlockBox child)
+    {
+        if (CurrentFlexContainer == null) return;
+        var flex = CurrentFlexContainer;
+        child.X = _flexChildStartX;
+        child.Y = flex.Y + flex.PaddingTop + flex.BorderTop;
+        _flexChildStartX += child.Width + child.MarginLeft + child.MarginRight + flex.FlexGap;
+    }
+
+    public void BeginFlexContainer(BlockBox flex)
+    {
+        CurrentFlexContainer = flex;
+        _flexChildStartX = flex.X + flex.PaddingLeft + flex.BorderLeft;
+    }
+
+    public void EndFlexContainer()
+    {
+        CurrentFlexContainer = null;
     }
 
     private static float GetFontSize(CssDeclarationBlock? style)

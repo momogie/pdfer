@@ -12,10 +12,15 @@ public sealed class TableHandler : ITagHandler
     public void Open(TagContext context)
     {
         if (context.TableDef != null)
+        {
+            var style = context.ComputedStyle;
+            var isFixed = style?.GetPropertyValue("table-layout")?.Trim().ToLowerInvariant() == "fixed";
             context.TableDef.Current = new TableDefinition
             {
-                Style = context.ComputedStyle
+                Style = style,
+                IsFixedLayout = isFixed
             };
+        }
 
         var box = context.LayoutEngine.CreateBlock(
             context.TagName, context.Attributes, context.ParentStyle);

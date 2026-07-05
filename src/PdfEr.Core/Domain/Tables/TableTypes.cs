@@ -8,6 +8,8 @@ public sealed class TableDefinition
     public int ColumnCount { get; set; }
     public float TotalWidth { get; set; }
     public CssDeclarationBlock? Style { get; set; }
+    public List<float> FixedColWidths { get; } = new();
+    public bool IsFixedLayout { get; set; }
 }
 
 public sealed class TableRow

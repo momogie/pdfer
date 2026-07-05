@@ -204,13 +204,34 @@ public sealed class PdfConverterService : IPdfConverter
                         _currentBlock = context.CurrentBlock;
                     }
 
-                    if (tagName is not "td" and not "th")
-                        WalkDom(el, resolved);
-
-                    if (context.CurrentBlock != null)
+                    // For flex containers, layout before walking children
+                    bool isFlex = resolved?.GetPropertyValue("display") is "flex" or "inline-flex";
+                    if (isFlex && context.CurrentBlock != null)
                     {
                         _layoutEngine.LayoutBlock(context.CurrentBlock, _currentConfig);
                     }
+
+                    if (tagName is not "td" and not "th" and not "svg")
+                        WalkDom(el, resolved);
+
+                    // Flex child positioning for non-flex blocks
+                    if (_layoutEngine.CurrentFlexContainer != null && context.CurrentBlock != null && context.CurrentBlock != _layoutEngine.CurrentFlexContainer)
+                    {
+                        _layoutEngine.PositionFlexChild(context.CurrentBlock);
+                    }
+
+                    if (!isFlex && context.CurrentBlock != null)
+                    {
+                        _layoutEngine.LayoutBlock(context.CurrentBlock, _currentConfig);
+                    }
+
+                    if (isFlex)
+                    {
+                        _layoutEngine.EndFlexContainer();
+                    }
+
+                    if (tagName is "svg")
+                        continue;
 
                     if (tagName is "ul" or "ol" && _listStack.Count > 0)
                         _listStack.Pop();

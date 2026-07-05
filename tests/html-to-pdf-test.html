@@ -1,0 +1,1450 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HTML to PDF Converter — Feature Test Page</title>
+  <style>
+    /* ─── RESET & BASE ─── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --brand:    #4f46e5;
+      --brand-lt: #e0e7ff;
+      --success:  #16a34a;
+      --warn:     #d97706;
+      --danger:   #dc2626;
+      --gray-50:  #f9fafb;
+      --gray-100: #f3f4f6;
+      --gray-200: #e5e7eb;
+      --gray-400: #9ca3af;
+      --gray-700: #374151;
+      --gray-900: #111827;
+    }
+
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      font-size: 13px;
+      line-height: 1.6;
+      color: var(--gray-900);
+      background: #fff;
+      padding: 0;
+    }
+
+    /* ─── PRINT CONTROLS (hanya tampil di browser) ─── */
+    #print-bar {
+      position: sticky;
+      top: 0;
+      z-index: 999;
+      background: var(--gray-900);
+      color: #fff;
+      padding: 10px 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 12px;
+    }
+    #print-bar strong { font-size: 13px; letter-spacing: .5px; }
+    #print-bar button {
+      background: var(--brand);
+      color: #fff;
+      border: none;
+      padding: 6px 16px;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    #print-bar button:hover { background: #4338ca; }
+    #print-bar span { margin-left: auto; opacity: .6; font-size: 11px; }
+
+    @media print {
+      #print-bar { display: none !important; }
+    }
+
+    /* ─── LAYOUT ─── */
+    .page-wrap {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    /* ─── COVER / HEADER ─── */
+    .cover {
+      background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 50%, #ec4899 100%);
+      color: #fff;
+      padding: 48px 40px;
+      border-radius: 12px;
+      margin-bottom: 32px;
+      position: relative;
+      overflow: hidden;
+    }
+    .cover::before {
+      content: '';
+      position: absolute;
+      width: 300px; height: 300px;
+      background: rgba(255,255,255,.07);
+      border-radius: 50%;
+      right: -60px; top: -80px;
+    }
+    .cover::after {
+      content: '';
+      position: absolute;
+      width: 200px; height: 200px;
+      background: rgba(255,255,255,.05);
+      border-radius: 50%;
+      right: 80px; bottom: -60px;
+    }
+    .cover h1 { font-size: 28px; font-weight: 800; margin-bottom: 8px; }
+    .cover p  { opacity: .85; font-size: 14px; max-width: 540px; }
+    .cover .badge-row { margin-top: 20px; display: flex; flex-wrap: wrap; gap: 8px; }
+    .badge {
+      display: inline-block;
+      background: rgba(255,255,255,.2);
+      border: 1px solid rgba(255,255,255,.35);
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .4px;
+    }
+
+    /* ─── SECTION TITLES ─── */
+    .section {
+      margin-bottom: 36px;
+    }
+    .section-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--brand);
+      border-bottom: 2px solid var(--brand-lt);
+      padding-bottom: 8px;
+      margin-bottom: 16px;
+    }
+    .section-title .num {
+      background: var(--brand);
+      color: #fff;
+      width: 24px; height: 24px;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    /* ─── TYPOGRAPHY ─── */
+    .typo-demo h1 { font-size: 26px; color: var(--gray-900); margin-bottom: 4px; }
+    .typo-demo h2 { font-size: 22px; color: var(--gray-700); margin-bottom: 4px; }
+    .typo-demo h3 { font-size: 18px; color: var(--gray-700); margin-bottom: 4px; }
+    .typo-demo h4 { font-size: 15px; margin-bottom: 4px; }
+    .typo-demo h5 { font-size: 13px; margin-bottom: 4px; }
+    .typo-demo h6 { font-size: 11px; color: var(--gray-400); margin-bottom: 12px; }
+    .typo-demo p  { margin-bottom: 8px; }
+
+    .text-showcase {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .text-card {
+      background: var(--gray-50);
+      border: 1px solid var(--gray-200);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 12px;
+    }
+    .text-card .label { color: var(--gray-400); font-size: 10px; margin-bottom: 4px; }
+
+    /* ─── COLORS ─── */
+    .color-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+    .color-swatch {
+      flex: 1; min-width: 60px;
+      height: 44px;
+      border-radius: 8px;
+      display: flex; align-items: flex-end;
+      padding: 4px 6px;
+      font-size: 10px;
+      font-weight: 600;
+    }
+
+    /* ─── TABLES ─── */
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th {
+      background: var(--brand);
+      color: #fff;
+      padding: 8px 12px;
+      text-align: left;
+      font-weight: 600;
+    }
+    td { padding: 7px 12px; border-bottom: 1px solid var(--gray-200); }
+    tr:nth-child(even) td { background: var(--gray-50); }
+    tr:hover td { background: var(--brand-lt); }
+
+    .table-compact th, .table-compact td { padding: 5px 8px; font-size: 11px; }
+
+    .table-bordered td, .table-bordered th {
+      border: 1px solid var(--gray-200);
+    }
+
+    /* ─── LISTS ─── */
+    ul, ol { padding-left: 20px; margin-bottom: 10px; }
+    li { margin-bottom: 3px; }
+    dl dt { font-weight: 700; color: var(--brand); }
+    dl dd { margin-left: 16px; color: var(--gray-700); margin-bottom: 6px; }
+
+    /* ─── FORMS ─── */
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+    }
+    .form-group { display: flex; flex-direction: column; gap: 4px; }
+    .form-group label { font-size: 11px; font-weight: 600; color: var(--gray-700); }
+    .form-group input,
+    .form-group select,
+    .form-group textarea {
+      border: 1px solid var(--gray-200);
+      border-radius: 6px;
+      padding: 7px 10px;
+      font-size: 12px;
+      background: var(--gray-50);
+    }
+    .form-group textarea { resize: vertical; min-height: 60px; }
+    .form-row-check { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-bottom: 4px; }
+    .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+    .btn {
+      padding: 7px 16px;
+      border-radius: 6px;
+      border: none;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-primary   { background: var(--brand); color: #fff; }
+    .btn-success   { background: var(--success); color: #fff; }
+    .btn-danger    { background: var(--danger); color: #fff; }
+    .btn-warn      { background: var(--warn); color: #fff; }
+    .btn-outline   { background: transparent; border: 1.5px solid var(--brand); color: var(--brand); }
+    .btn-ghost     { background: var(--gray-100); color: var(--gray-700); }
+
+    /* ─── ALERTS ─── */
+    .alert {
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-size: 12px;
+      margin-bottom: 8px;
+      border-left: 4px solid;
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+    }
+    .alert-info    { background: #eff6ff; border-color: #3b82f6; color: #1e40af; }
+    .alert-success { background: #f0fdf4; border-color: #22c55e; color: #166534; }
+    .alert-warn    { background: #fffbeb; border-color: #f59e0b; color: #92400e; }
+    .alert-danger  { background: #fef2f2; border-color: #ef4444; color: #991b1b; }
+    .alert-icon    { font-size: 16px; flex-shrink: 0; }
+
+    /* ─── CARDS GRID ─── */
+    .cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 14px;
+    }
+    .card {
+      border: 1px solid var(--gray-200);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .card-img {
+      height: 80px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 32px;
+    }
+    .card-body { padding: 12px; }
+    .card-title { font-weight: 700; font-size: 13px; margin-bottom: 4px; }
+    .card-text  { font-size: 11px; color: var(--gray-700); }
+    .card-footer { padding: 8px 12px; background: var(--gray-50); border-top: 1px solid var(--gray-200); font-size: 11px; color: var(--gray-400); }
+
+    /* ─── CODE ─── */
+    pre {
+      background: #1e293b;
+      color: #e2e8f0;
+      border-radius: 8px;
+      padding: 16px;
+      font-size: 11.5px;
+      overflow-x: auto;
+      margin-bottom: 12px;
+      line-height: 1.7;
+    }
+    code {
+      background: var(--gray-100);
+      color: #be185d;
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-size: 11.5px;
+      font-family: 'Consolas', 'Courier New', monospace;
+    }
+    pre code { background: none; color: inherit; padding: 0; }
+
+    /* syntax highlight helpers */
+    .kw  { color: #93c5fd; }
+    .str { color: #86efac; }
+    .cm  { color: #64748b; font-style: italic; }
+    .fn  { color: #fbbf24; }
+
+    /* ─── BLOCKQUOTE ─── */
+    blockquote {
+      border-left: 4px solid var(--brand);
+      background: var(--brand-lt);
+      margin: 0 0 12px;
+      padding: 12px 16px;
+      border-radius: 0 8px 8px 0;
+      font-style: italic;
+      color: var(--brand);
+    }
+    blockquote cite { display: block; margin-top: 6px; font-size: 11px; font-style: normal; opacity: .75; }
+
+    /* ─── PROGRESS / METER ─── */
+    .progress-group { margin-bottom: 8px; }
+    .progress-label { display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 3px; }
+    progress {
+      width: 100%;
+      height: 10px;
+      appearance: none;
+      border-radius: 5px;
+      overflow: hidden;
+      border: none;
+      background: var(--gray-200);
+    }
+    progress::-webkit-progress-bar { background: var(--gray-200); }
+    progress::-webkit-progress-value { background: var(--brand); border-radius: 5px; }
+    progress.success::-webkit-progress-value { background: var(--success); }
+    progress.warn::-webkit-progress-value    { background: var(--warn); }
+    progress.danger::-webkit-progress-value  { background: var(--danger); }
+
+    /* ─── DETAILS / SUMMARY ─── */
+    details {
+      border: 1px solid var(--gray-200);
+      border-radius: 8px;
+      padding: 10px 14px;
+      margin-bottom: 8px;
+    }
+    summary {
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 13px;
+      color: var(--brand);
+    }
+    details[open] summary { margin-bottom: 8px; }
+    details p { font-size: 12px; color: var(--gray-700); }
+
+    /* ─── FIGURE / CAPTION ─── */
+    figure {
+      margin: 0 0 16px;
+      text-align: center;
+    }
+    figcaption {
+      font-size: 11px;
+      color: var(--gray-400);
+      margin-top: 6px;
+      font-style: italic;
+    }
+
+    /* ─── SVG INLINE ─── */
+    .svg-demo {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    /* ─── STATISTICS ─── */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .stat-card {
+      background: var(--brand);
+      color: #fff;
+      border-radius: 10px;
+      padding: 14px 16px;
+      text-align: center;
+    }
+    .stat-card.s2 { background: var(--success); }
+    .stat-card.s3 { background: var(--warn); }
+    .stat-card.s4 { background: var(--danger); }
+    .stat-card.s5 { background: #7c3aed; }
+    .stat-card.s6 { background: #0891b2; }
+    .stat-val { font-size: 24px; font-weight: 800; }
+    .stat-lbl { font-size: 10px; opacity: .8; margin-top: 2px; }
+
+    /* ─── TIMELINE ─── */
+    .timeline { position: relative; padding-left: 28px; }
+    .timeline::before {
+      content: '';
+      position: absolute;
+      left: 8px; top: 0; bottom: 0;
+      width: 2px;
+      background: var(--gray-200);
+    }
+    .tl-item { position: relative; margin-bottom: 18px; }
+    .tl-dot {
+      position: absolute;
+      left: -24px; top: 2px;
+      width: 14px; height: 14px;
+      border-radius: 50%;
+      background: var(--brand);
+      border: 2px solid #fff;
+      box-shadow: 0 0 0 2px var(--brand);
+    }
+    .tl-dot.done   { background: var(--success); box-shadow: 0 0 0 2px var(--success); }
+    .tl-dot.warn   { background: var(--warn);    box-shadow: 0 0 0 2px var(--warn); }
+    .tl-date { font-size: 10px; color: var(--gray-400); }
+    .tl-title { font-weight: 700; font-size: 13px; margin: 2px 0; }
+    .tl-desc  { font-size: 11px; color: var(--gray-700); }
+
+    /* ─── DATA BREAKDOWN ─── */
+    .bar-chart { margin-bottom: 12px; }
+    .bar-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+      font-size: 11px;
+    }
+    .bar-label { width: 80px; flex-shrink: 0; color: var(--gray-700); }
+    .bar-track { flex: 1; background: var(--gray-200); border-radius: 4px; height: 16px; position: relative; }
+    .bar-fill  { height: 100%; border-radius: 4px; background: var(--brand); display: flex; align-items: center; padding-left: 6px; }
+    .bar-fill span { color: #fff; font-size: 10px; font-weight: 700; }
+
+    /* ─── PAGE BREAK ─── */
+    .page-break {
+      page-break-before: always;
+    }
+    .page-break-hint {
+      border-top: 2px dashed var(--gray-200);
+      text-align: center;
+      color: var(--gray-400);
+      font-size: 10px;
+      padding: 6px 0;
+      margin: 24px 0;
+    }
+    @media print {
+      .page-break-hint { display: none; }
+    }
+
+    /* ─── SPECIAL TEXT ─── */
+    .special-text-demo {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      font-size: 12px;
+    }
+    .special-text-demo span { display: inline-flex; flex-direction: column; align-items: center; gap: 4px; min-width: 90px; }
+    .special-text-demo .lbl { font-size: 10px; color: var(--gray-400); }
+
+    /* ─── DIVIDERS ─── */
+    hr { border: none; border-top: 1px solid var(--gray-200); margin: 16px 0; }
+
+    /* ─── GRID LAYOUT DEMO ─── */
+    .layout-demo {
+      border: 1px solid var(--gray-200);
+      border-radius: 8px;
+      overflow: hidden;
+      font-size: 11px;
+    }
+    .layout-header { background: var(--brand); color: #fff; padding: 8px 12px; font-weight: 700; }
+    .layout-body { display: grid; grid-template-columns: 1fr 2fr; }
+    .layout-sidebar { background: var(--gray-50); border-right: 1px solid var(--gray-200); padding: 10px; }
+    .layout-main { padding: 10px; }
+    .layout-footer { background: var(--gray-100); border-top: 1px solid var(--gray-200); padding: 6px 12px; text-align: center; color: var(--gray-400); }
+
+    /* ─── INVOICE STYLE ─── */
+    .invoice-header {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    .invoice-logo { font-size: 22px; font-weight: 900; color: var(--brand); }
+    .invoice-meta { text-align: right; font-size: 11px; color: var(--gray-700); }
+    .invoice-meta .inv-num { font-size: 18px; font-weight: 800; color: var(--gray-900); }
+    .invoice-parties {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    .party-box { background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: 8px; padding: 10px 14px; font-size: 11px; }
+    .party-box .party-label { font-size: 10px; text-transform: uppercase; letter-spacing: .8px; color: var(--gray-400); margin-bottom: 4px; }
+    .party-box .party-name { font-weight: 700; font-size: 13px; margin-bottom: 2px; }
+    .invoice-total-row { display: flex; justify-content: flex-end; }
+    .invoice-totals { min-width: 220px; font-size: 12px; }
+    .inv-row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--gray-200); }
+    .inv-row.total { font-weight: 800; font-size: 14px; color: var(--brand); border-bottom: none; border-top: 2px solid var(--brand); padding-top: 8px; margin-top: 4px; }
+
+    /* ─── WATERMARK SIMULATION ─── */
+    .watermark-demo {
+      position: relative;
+      border: 1px solid var(--gray-200);
+      border-radius: 8px;
+      padding: 24px;
+      overflow: hidden;
+    }
+    .watermark-text {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%) rotate(-30deg);
+      font-size: 64px;
+      font-weight: 900;
+      color: rgba(79,70,229,.06);
+      white-space: nowrap;
+      pointer-events: none;
+      letter-spacing: 8px;
+    }
+
+    /* ─── RESPONSIVE CHECK ─── */
+    .resp-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+    }
+    @media (max-width: 600px) {
+      .resp-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    .resp-cell {
+      background: var(--brand-lt);
+      border: 1px solid var(--brand);
+      border-radius: 6px;
+      padding: 10px;
+      text-align: center;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--brand);
+    }
+
+    /* ─── FOOTER ─── */
+    .doc-footer {
+      margin-top: 40px;
+      padding-top: 16px;
+      border-top: 2px solid var(--gray-200);
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 16px;
+      font-size: 11px;
+      color: var(--gray-400);
+    }
+    .doc-footer .center { text-align: center; }
+    .doc-footer .right  { text-align: right; }
+  </style>
+</head>
+<body>
+
+<!-- Print Bar -->
+<div id="print-bar">
+  <strong>🖨️ HTML to PDF Feature Test</strong>
+  <button onclick="window.print()">Print / Save PDF</button>
+  <span>Gunakan browser Print → Save as PDF untuk test converter</span>
+</div>
+
+<div class="page-wrap">
+
+  <!-- ══════════════════════════════════════════
+       COVER
+  ══════════════════════════════════════════ -->
+  <div class="cover">
+    <h1>HTML → PDF Feature Test Page</h1>
+    <p>Halaman ini dirancang untuk menguji semua fitur rendering HTML ke PDF: tipografi, warna, tabel, form, layout grid, SVG, kode, dan banyak lagi.</p>
+    <div class="badge-row">
+      <span class="badge">Typography</span>
+      <span class="badge">Tables</span>
+      <span class="badge">Forms</span>
+      <span class="badge">Grid Layout</span>
+      <span class="badge">SVG Inline</span>
+      <span class="badge">Colors</span>
+      <span class="badge">Code Blocks</span>
+      <span class="badge">Charts</span>
+      <span class="badge">Page Break</span>
+      <span class="badge">Invoice</span>
+      <span class="badge">Watermark</span>
+    </div>
+  </div>
+
+
+  <!-- ══════════════════════════════════════════
+       1. TYPOGRAPHY
+  ══════════════════════════════════════════ -->
+  <div class="section">
+    <div class="section-title"><span class="num">1</span> Typography &amp; Heading Hierarchy</div>
+    <div class="typo-demo">
+      <h1>Heading 1 — 26px Bold</h1>
+      <h2>Heading 2 — 22px SemiBold</h2>
+      <h3>Heading 3 — 18px SemiBold</h3>
+      <h4>Heading 4 — 15px Medium</h4>
+      <h5>Heading 5 — 13px Medium</h5>
+      <h6>Heading 6 — 11px Regular</h6>
+      <p>Paragraph teks biasa. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Proin vehicula lorem id enim congue, vel aliquet est condimentum. Integer diam tortor, facilisis vitae lectus vitae, tempus viverra ligula.</p>
+      <p>Paragraph kedua dengan <strong>teks tebal</strong>, <em>teks miring</em>, <u>teks bergaris bawah</u>, dan <s>teks coret</s>. Contoh tautan: <a href="#" style="color:var(--brand)">klik di sini</a>.</p>
+    </div>
+
+    <div class="text-showcase">
+      <div class="text-card">
+        <div class="label">BOLD</div>
+        <strong>Font weight 700</strong>
+      </div>
+      <div class="text-card">
+        <div class="label">ITALIC</div>
+        <em>Font style italic</em>
+      </div>
+      <div class="text-card">
+        <div class="label">UNDERLINE</div>
+        <u>text-decoration underline</u>
+      </div>
+      <div class="text-card">
+        <div class="label">STRIKETHROUGH</div>
+        <s>text-decoration line-through</s>
+      </div>
+      <div class="text-card">
+        <div class="label">SUPERSCRIPT</div>
+        E = mc<sup>2</sup>, H<sub>2</sub>O
+      </div>
+      <div class="text-card">
+        <div class="label">SMALL CAPS</div>
+        <span style="font-variant:small-caps">Small Caps Text</span>
+      </div>
+      <div class="text-card">
+        <div class="label">LETTER SPACING</div>
+        <span style="letter-spacing:3px">W I D E</span>
+      </div>
+      <div class="text-card">
+        <div class="label">MONOSPACE</div>
+        <code>console.log()</code>
+      </div>
+    </div>
+
+    <!-- Special text -->
+    <div class="special-text-demo">
+      <span><mark style="background:#fef08a;padding:0 3px">Highlighted</mark><span class="lbl">mark</span></span>
+      <span><abbr title="Hypertext Markup Language" style="cursor:help;border-bottom:1px dotted">HTML</abbr><span class="lbl">abbr</span></span>
+      <span><kbd style="background:var(--gray-100);border:1px solid var(--gray-400);border-radius:3px;padding:1px 5px;font-size:11px">Ctrl+P</kbd><span class="lbl">kbd</span></span>
+      <span><samp style="font-family:monospace;font-size:11px">Error: 404</samp><span class="lbl">samp</span></span>
+      <span><var style="font-style:italic;color:var(--brand)">x = y + z</var><span class="lbl">var</span></span>
+      <span><del style="color:var(--danger)">deprecated</del><span class="lbl">del</span></span>
+      <span><ins style="color:var(--success)">added text</ins><span class="lbl">ins</span></span>
+      <span><q style="font-style:italic">"quoted text"</q><span class="lbl">q</span></span>
+    </div>
+  </div>
+
+
+  <!-- ══════════════════════════════════════════
+       2. COLORS & BACKGROUNDS
+  ══════════════════════════════════════════ -->
+  <div class="section">
+    <div class="section-title"><span class="num">2</span> Colors &amp; Backgrounds</div>
+    <div class="color-row">
+      <div class="color-swatch" style="background:#4f46e5;color:#fff">Indigo</div>
+      <div class="color-swatch" style="background:#7c3aed;color:#fff">Violet</div>
+      <div class="color-swatch" style="background:#ec4899;color:#fff">Pink</div>
+      <div class="color-swatch" style="background:#ef4444;color:#fff">Red</div>
+      <div class="color-swatch" style="background:#f97316;color:#fff">Orange</div>
+      <div class="color-swatch" style="background:#eab308;color:#fff">Yellow</div>
+      <div class="color-swatch" style="background:#22c55e;color:#fff">Green</div>
+      <div class="color-swatch" style="background:#14b8a6;color:#fff">Teal</div>
+      <div class="color-swatch" style="background:#3b82f6;color:#fff">Blue</div>
+      <div class="color-swatch" style="background:#6b7280;color:#fff">Gray</div>
+    </div>
+    <div class="color-row">
+      <div class="color-swatch" style="background:linear-gradient(to right,#4f46e5,#7c3aed);color:#fff">Gradient 1</div>
+      <div class="color-swatch" style="background:linear-gradient(to right,#ec4899,#f97316);color:#fff">Gradient 2</div>
+      <div class="color-swatch" style="background:linear-gradient(to right,#22c55e,#14b8a6);color:#fff">Gradient 3</div>
+      <div class="color-swatch" style="background:linear-gradient(135deg,#1e293b,#334155);color:#fff">Dark Gradient</div>
+      <div class="color-swatch" style="background:linear-gradient(to right,#fef9c3,#fde68a);color:#92400e">Light Gradient</div>
+      <div class="color-swatch" style="background:radial-gradient(circle,#7c3aed,#1e293b);color:#fff">Radial</div>
+    </div>
+  </div>
+
+
+  <!-- ══════════════════════════════════════════
+       3. TABLES
+  ══════════════════════════════════════════ -->
+  <div class="section">
+    <div class="section-title"><span class="num">3</span> Tables</div>
+
+    <p style="font-size:12px;margin-bottom:10px;color:var(--gray-700)"><strong>Standard Table dengan Striped Rows &amp; Header Berwarna</strong></p>
+    <table style="margin-bottom:20px">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Nama Produk</th>
+          <th>Kategori</th>
+          <th>Harga</th>
+          <th>Stok</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>001</td><td>Laptop Pro X1</td><td>Electronics</td>
+          <td>Rp 12.500.000</td><td>24</td>
+          <td><span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">Active</span></td>
+        </tr>
+        <tr>
+          <td>002</td><td>Wireless Mouse M5</td><td>Accessories</td>
+          <td>Rp 350.000</td><td>150</td>
+          <td><span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">Active</span></td>
+        </tr>
+        <tr>
+          <td>003</td><td>USB-C Hub 7-in-1</td><td>Accessories</td>
+          <td>Rp 450.000</td><td>0</td>
+          <td><span style="background:#fef2f2;color:#991b1b;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">Out of Stock</span></td>
+        </tr>
+        <tr>
+          <td>004</td><td>Monitor 27" 4K</td><td>Electronics</td>
+          <td>Rp 5.200.000</td><td>8</td>
+          <td><span style="background:#fffbeb;color:#92400e;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">Low Stock</span></td>
+        </tr>
+        <tr>
+          <td>005</td><td>Mechanical Keyboard</td><td>Accessories</td>
+          <td>Rp 850.000</td><td>45</td>
+          <td><span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">Active</span></td>
+        </tr>
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="3" style="font-weight:700;text-align:right">Total Stok:</td>
+          <td colspan="3" style="font-weight:700;color:var(--brand)">227 unit</td>
+        </tr>
+      </tfoot>
+    </table>
+
+    <p style="font-size:12px;margin-bottom:10px;color:var(--gray-700)"><strong>Bordered Compact Table dengan Colspan &amp; Rowspan</strong></p>
+    <table class="table-compact table-bordered" style="margin-bottom:20px">
+      <thead>
+        <tr>
+          <th colspan="2">Periode Q3 2024</th>
+          <th>Jan</th><th>Feb</th><th>Mar</th><th>Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td rowspan="2" style="font-weight:700;background:var(--brand-lt);color:var(--brand)">Revenue</td>
+          <td>Online</td>
+          <td>Rp 45jt</td><td>Rp 52jt</td><td>Rp 61jt</td>
+          <td style="font-weight:700">Rp 158jt</td>
+        </tr>
+        <tr>
+          <td>Offline</td>
+          <td>Rp 23jt</td><td>Rp 19jt</td><td>Rp 27jt</td>
+          <td style="font-weight:700">Rp 69jt</td>
+        </tr>
+        <tr>
+          <td rowspan="2" style="font-weight:700;background:#fef2f2;color:var(--danger)">Cost</td>
+          <td>COGS</td>
+          <td>Rp 28jt</td><td>Rp 32jt</td><td>Rp 38jt</td>
+          <td style="font-weight:700">Rp 98jt</td>
+        </tr>
+        <tr>
+          <td>Ops</td>
+          <td>Rp 8jt</td><td>Rp 8jt</td><td>Rp 9jt</td>
+          <td style="font-weight:700">Rp 25jt</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+
+  <!-- ══════════════════════════════════════════
+       4. LISTS
+  ══════════════════════════════════════════ -->
+  <div class="section">
+    <div class="section-title"><span class="num">4</span> Lists</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px">
+      <div>
+        <p style="font-size:11px;font-weight:700;margin-bottom:6px">Unordered (disc)</p>
+        <ul>
+          <li>Frontend — Vue 3 / Nuxt</li>
+          <li>Backend — ASP.NET Core
+            <ul>
+              <li>Entity Framework</li>
+              <li>Dapper</li>
+            </ul>
+          </li>
+          <li>Database — PostgreSQL</li>
+          <li>Auth — OIDC / JWT</li>
+        </ul>
+      </div>
+      <div>
+        <p style="font-size:11px;font-weight:700;margin-bottom:6px">Ordered (decimal)</p>
+        <ol>
+          <li>Analisis Kebutuhan</li>
+          <li>Desain Sistem
+            <ol>
+              <li>ERD</li>
+              <li>API Contract</li>
+            </ol>
+          </li>
+          <li>Development</li>
+          <li>QA &amp; Testing</li>
+          <li>Deployment</li>
+        </ol>
+      </div>
+      <div>
+        <p style="font-size:11px;font-weight:700;margin-bottom:6px">Definition List</p>
+        <dl>
+          <dt>REST</dt>
+          <dd>Representational State Transfer</dd>
+          <dt>OIDC</dt>
+          <dd>OpenID Connect Protocol</dd>
+          <dt>SSO</dt>
+          <dd>Single Sign-On</dd>
+          <dt>DCA</dt>
+          <dd>Dollar Cost Averaging</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ══════════════════════════════════════════
+       5. BLOCKQUOTE & ALERTS
+  ══════════════════════════════════════════ -->
+  <div class="section">
+    <div class="section-title"><span class="num">5</span> Blockquote &amp; Alerts</div>
+
+    <blockquote>
+      "Any fool can write code that a computer can understand. Good programmers write code that humans can understand."
+      <cite>— Martin Fowler</cite>
+    </blockquote>
+
+    <div class="alert alert-info">
+      <span class="alert-icon">ℹ️</span>
+      <div><strong>Info:</strong> Pastikan semua aset CSS di-inline atau diakses melalui URL absolut agar PDF converter bisa me-render style dengan benar.</div>
+    </div>
+    <div class="alert alert-success">
+      <span class="alert-icon">✅</span>
+      <div><strong>Success:</strong> Konversi berhasil! File PDF telah disimpan ke direktori output.</div>
+    </div>
+    <div class="alert alert-warn">
+      <span class="alert-icon">⚠️</span>
+      <div><strong>Warning:</strong> Beberapa font custom mungkin tidak di-render jika tidak di-embed atau diakses via CDN.</div>
+    </div>
+    <div class="alert alert-danger">
+      <span class="alert-icon">🚨</span>
+      <div><strong>Error:</strong> Koneksi ke printer gagal. Pastikan QZ Tray sudah berjalan di background.</div>
+    </div>
+  </div>
+
+
+  <!-- ══════════════════════════════════════════
+       6. CODE BLOCKS
+  ══════════════════════════════════════════ -->
+  <div class="section">
+    <div class="section-title"><span class="num">6</span> Code Blocks</div>
+    <pre><code><span class="cm">// C# — Generate PDF with WeasyPrint via CLI</span>
+<span class="kw">public async</span> Task&lt;byte[]&gt; <span class="fn">GeneratePdfAsync</span>(string htmlContent)
+{
+    <span class="kw">var</span> tempFile = Path.GetTempFileName() + <span class="str">".html"</span>;
+    <span class="kw">var</span> outputFile = Path.GetTempFileName() + <span class="str">".pdf"</span>;
+
+    <span class="kw">await</span> File.WriteAllTextAsync(tempFile, htmlContent);
+
+    <span class="kw">using var</span> proc = Process.Start(<span class="kw">new</span> ProcessStartInfo {
+        FileName = <span class="str">"weasyprint"</span>,
+        Arguments = $<span class="str">"{tempFile} {outputFile}"</span>,
+        RedirectStandardOutput = <span class="kw">true</span>,
+        UseShellExecute = <span class="kw">false</span>
+    });
+    <span class="kw">await</span> proc!.WaitForExitAsync();
+
+    <span class="kw">return await</span> File.ReadAllBytesAsync(outputFile);
+}</code></pre>
+
+    <pre><code><span class="cm">/* CSS @page rule untuk ukuran & margin PDF */</span>
+@page {
+  size: A4 portrait;
+  margin: 20mm 15mm 25mm 15mm;
+}
+
+@page:first {
+  margin-top: 0;
+}
+
+<span class="kw">.page-break</span> {
+  page-break-before: always; <span class="cm">/* paksa halaman baru */</span>
+  break-before: page;        <span class="cm">/* standar modern */</span>
+}
+
+<span class="kw">.no-break</span> {
+  page-break-inside: avoid;
+  break-inside: avoid;
+}</code></pre>
+  </div>
+
+
+  <!-- ══════════════════════════════════════════
+       7. FORMS & INPUT
+  ══════════════════════════════════════════ -->
+  <div class="section">
+    <div class="section-title"><span class="num">7</span> Form Elements</div>
+    <div class="form-grid" style="margin-bottom:12px">
+      <div class="form-group">
+        <label>Nama Lengkap</label>
+        <input type="text" value="Budi Santoso" />
+      </div>
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" value="budi@example.co.id" />
+      </div>
+      <div class="form-group">
+        <label>Nomor Telepon</label>
+        <input type="tel" value="+62 812-3456-7890" />
+      </div>
+      <div class="form-group">
+        <label>Tanggal Lahir</label>
+        <input type="date" value="1990-08-17" />
+      </div>
+      <div class="form-group">
+        <label>Jabatan</label>
+        <select>
+          <option>Senior Developer</option>
+          <option>Tech Lead</option>
+          <option>Architect</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Range Priority (1–10)</label>
+        <input type="range" min="1" max="10" value="7" />
+      </div>
+      <div class="form-group" style="grid-column:span 2">
+        <label>Deskripsi Proyek</label>
+        <textarea>Membangun sistem manajemen bengkel berbasis Laravel 11 dengan fitur inventory, service order, billing, dan laporan keuangan.</textarea>
+      </div>
+    </div>
+    <div class="form-row-check"><input type="checkbox" checked /><label>Setuju dengan syarat dan ketentuan</label></div>
+    <div class="form-row-check"><input type="checkbox" /><label>Terima notifikasi email</label></div>
+    <div style="margin-top:8px;margin-bottom:12px">
+      <div class="form-row-check"><input type="radio" name="plan" checked /><label>Free Plan</label></div>
+      <div class="form-row-check"><input type="radio" name="plan" /><label>Pro Plan (Rp 99.000/bln)</label></div>
+      <div class="form-row-check"><input type="radio" name="plan" /><label>Enterprise (custom)</label></div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-primary">Simpan</button>
+      <button class="btn btn-success">Submit</button>
+      <button class="btn btn-danger">Hapus</button>
+      <button class="btn btn-warn">Archive</button>
+      <button class="btn btn-outline">Preview</button>
+      <button class="btn btn-ghost">Batal</button>
+    </div>
+  </div>
+
+
+  <!-- ══════════════════════════════════════════
+       8. PROGRESS BARS & METER
+  ══════════════════════════════════════════ -->
+  <div class="section">
+    <div class="section-title"><span class="num">8</span> Progress &amp; Meter</div>
+    <div class="progress-group">
+      <div class="progress-label"><span>JavaScript / TypeScript</span><span>92%</span></div>
+      <progress value="92" max="100"></progress>
+    </div>
+    <div class="progress-group">
+      <div class="progress-label"><span>C# / .NET</span><span>87%</span></div>
+      <progress class="success" value="87" max="100"></progress>
+    </div>
+    <div class="progress-group">
+      <div class="progress-label"><span>PHP / Laravel</span><span>74%</span></div>
+      <progress class="warn" value="74" max="100"></progress>
+    </div>
+    <div class="progress-group">
+      <div class="progress-label"><span>Rust</span><span>28%</span></div>
+      <progress class="danger" value="28" max="100"></progress>
+    </div>
+    <div style="margin-top:10px;font-size:11px;color:var(--gray-700)">
+      Storage: <meter value="68" min="0" max="100" low="30" high="80" optimum="50" style="width:200px"></meter> 68 GB / 100 GB
+    </div>
+  </div>
+
+
+  <!-- ══════════════════════════════════════════
+       9. INLINE SVG
+  ══════════════════════════════════════════ -->
+  <div class="section">
+    <div class="section-title"><span class="num">9</span> Inline SVG Graphics</div>
+    <div class="svg-demo">
+
+      <!-- Pie Chart (SVG) -->
+      <figure>
+        <svg width="130" height="130" viewBox="0 0 130 130" xmlns="http://www.w3.org/2000/svg">
+          <title>Revenue Pie Chart</title>
+          <!-- segments: 45% online, 30% retail, 25% partner -->
+          <circle r="52" cx="65" cy="65" fill="transparent" stroke="#4f46e5"
+            stroke-width="30" stroke-dasharray="146.6 179.4" stroke-dashoffset="0" transform="rotate(-90 65 65)"/>
+          <circle r="52" cx="65" cy="65" fill="transparent" stroke="#22c55e"
+            stroke-width="30" stroke-dasharray="94.2 231.8" stroke-dashoffset="-146.6" transform="rotate(-90 65 65)"/>
+          <circle r="52" cx="65" cy="65" fill="transparent" stroke="#f97316"
+            stroke-width="30" stroke-dasharray="78.5 247.5" stroke-dashoffset="-240.8" transform="rotate(-90 65 65)"/>
+          <circle r="37" cx="65" cy="65" fill="white"/>
+          <text x="65" y="62" text-anchor="middle" font-size="11" font-weight="bold" fill="#374151">Revenue</text>
+          <text x="65" y="76" text-anchor="middle" font-size="10" fill="#9ca3af">Split</text>
+        </svg>
+        <figcaption>Donut Chart (SVG)</figcaption>
+      </figure>
+
+      <!-- Bar Chart (SVG) -->
+      <figure>
+        <svg width="200" height="130" viewBox="0 0 200 130" xmlns="http://www.w3.org/2000/svg">
+          <title>Monthly Bar Chart</title>
+          <rect x="10" y="60" width="24" height="60" fill="#4f46e5" rx="3"/>
+          <rect x="46" y="40" width="24" height="80" fill="#7c3aed" rx="3"/>
+          <rect x="82" y="25" width="24" height="95" fill="#ec4899" rx="3"/>
+          <rect x="118" y="35" width="24" height="85" fill="#4f46e5" rx="3"/>
+          <rect x="154" y="15" width="24" height="105" fill="#22c55e" rx="3"/>
+          <text x="22"  y="128" text-anchor="middle" font-size="9" fill="#9ca3af">Jan</text>
+          <text x="58"  y="128" text-anchor="middle" font-size="9" fill="#9ca3af">Feb</text>
+          <text x="94"  y="128" text-anchor="middle" font-size="9" fill="#9ca3af">Mar</text>
+          <text x="130" y="128" text-anchor="middle" font-size="9" fill="#9ca3af">Apr</text>
+          <text x="166" y="128" text-anchor="middle" font-size="9" fill="#9ca3af">May</text>
+          <line x1="5" y1="120" x2="195" y2="120" stroke="#e5e7eb" stroke-width="1"/>
+        </svg>
+        <figcaption>Bar Chart (SVG)</figcaption>
+      </figure>
+
+      <!-- Icon Grid SVG -->
+      <figure>
+        <svg width="130" height="130" viewBox="0 0 130 130" xmlns="http://www.w3.org/2000/svg">
+          <rect width="130" height="130" rx="10" fill="#f0fdf4"/>
+          <!-- check icon -->
+          <circle cx="45" cy="45" r="20" fill="#22c55e"/>
+          <polyline points="36,45 43,52 57,37" stroke="white" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+          <!-- warning icon -->
+          <polygon points="85,25 105,60 65,60" fill="#f59e0b"/>
+          <line x1="85" y1="35" x2="85" y2="47" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+          <circle cx="85" cy="53" r="2" fill="white"/>
+          <!-- star icon -->
+          <polygon points="45,70 49,82 62,82 52,90 56,103 45,95 34,103 38,90 28,82 41,82"
+            fill="#fbbf24" stroke="#d97706" stroke-width="1"/>
+          <!-- bolt icon -->
+          <polygon points="88,68 80,88 87,88 82,108 96,83 88,83 93,68" fill="#4f46e5"/>
+        </svg>
+        <figcaption>SVG Icons</figcaption>
+      </figure>
+
+      <!-- Line Chart SVG -->
+      <figure>
+        <svg width="200" height="130" viewBox="0 0 200 130" xmlns="http://www.w3.org/2000/svg">
+          <title>Trend Line Chart</title>
+          <defs>
+            <linearGradient id="grad1" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#4f46e5" stop-opacity=".3"/>
+              <stop offset="100%" stop-color="#4f46e5" stop-opacity="0"/>
+            </linearGradient>
+          </defs>
+          <path d="M10,100 L50,80 L90,60 L120,70 L150,40 L190,20 L190,120 L10,120 Z" fill="url(#grad1)"/>
+          <polyline points="10,100 50,80 90,60 120,70 150,40 190,20"
+            fill="none" stroke="#4f46e5" stroke-width="2.5" stroke-linejoin="round"/>
+          <circle cx="10"  cy="100" r="3.5" fill="#4f46e5"/>
+          <circle cx="50"  cy="80"  r="3.5" fill="#4f46e5"/>
+          <circle cx="90"  cy="60"  r="3.5" fill="#4f46e5"/>
+          <circle cx="120" cy="70"  r="3.5" fill="#4f46e5"/>
+          <circle cx="150" cy="40"  r="3.5" fill="#4f46e5"/>
+          <circle cx="190" cy="20"  r="3.5" fill="#4f46e5"/>
+          <line x1="5" y1="120" x2="195" y2="120" stroke="#e5e7eb" stroke-width="1"/>
+        </svg>
+        <figcaption>Area Line Chart (SVG)</figcaption>
+      </figure>
+    </div>
+  </div>
+
+
+  <!-- ══════════════════════════════════════════
+       10. DETAILS / ACCORDION
+  ══════════════════════════════════════════ -->
+  <div class="section">
+    <div class="section-title"><span class="num">10</span> Details &amp; Summary (Accordion)</div>
+    <details open>
+      <summary>📦 Stack Teknologi Utama</summary>
+      <p>Frontend: Vue 3 + Nuxt 3, Tailwind CSS, Pinia. Backend: ASP.NET Core 8, EF Core, Dapper. Database: PostgreSQL, Redis. Auth: Duende IdentityServer, OIDC.</p>
+    </details>
+    <details>
+      <summary>🏗️ Arsitektur Microservice</summary>
+      <p>Nexus Identity (SSO), PayBridge (Payment), ServiceDesk (Workshop), UPHR (HRIS) — semua terhubung via API Gateway dengan JWT Bearer token.</p>
+    </details>
+    <details>
+      <summary>📊 Modul HRIS yang Sudah Live</summary>
+      <p>Attendance, Payroll, Leave Management, Career Transition, Roster Scheduling, Remuneration, dan Report Engine berbasis NCalc DSL.</p>
+    </details>
+  </div>
+
+
+  <!-- ══════════════════════════════════════════
+       PAGE BREAK MARKER
+  ══════════════════════════════════════════ -->
+  <div class="page-break-hint">── ✂ PAGE BREAK (hanya terlihat di browser) ──</div>
+  <div class="page-break"></div>
+
+
+  <!-- ══════════════════════════════════════════
+       11. STATISTICS CARDS
+  ══════════════════════════════════════════ -->
+  <div class="section">
+    <div class="section-title"><span class="num">11</span> Statistics Cards</div>
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-val">Rp 2.4M</div>
+        <div class="stat-lbl">Revenue Bulan Ini</div>
+      </div>
+      <div class="stat-card s2">
+        <div class="stat-val">1,284</div>
+        <div class="stat-lbl">Total Transaksi</div>
+      </div>
+      <div class="stat-card s3">
+        <div class="stat-val">47</div>
+        <div class="stat-lbl">Tiket Pending</div>
+      </div>
+      <div class="stat-card s4">
+        <div class="stat-val">3</div>
+        <div class="stat-lbl">Service Down</div>
+      </div>
+      <div class="stat-card s5">
+        <div class="stat-val">98.7%</div>
+        <div class="stat-lbl">Uptime SLA</div>
+      </div>
+      <div class="stat-card s6">
+        <div class="stat-val">12ms</div>
+        <div class="stat-lbl">Avg Latency</div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ══════════════════════════════════════════
+       12. HORIZONTAL BAR CHART (CSS)
+  ══════════════════════════════════════════ -->
+  <div class="section">
+    <div class="section-title"><span class="num">12</span> CSS Bar Chart</div>
+    <div class="bar-chart">
+      <div class="bar-row">
+        <span class="bar-label">Jakarta</span>
+        <div class="bar-track"><div class="bar-fill" style="width:85%"><span>85%</span></div></div>
+      </div>
+      <div class="bar-row">
+        <span class="bar-label">Surabaya</span>
+        <div class="bar-track"><div class="bar-fill" style="width:64%;background:#22c55e"><span>64%</span></div></div>
+      </div>
+      <div class="bar-row">
+        <span class="bar-label">Bandung</span>
+        <div class="bar-track"><div class="bar-fill" style="width:51%;background:#f97316"><span>51%</span></div></div>
+      </div>
+      <div class="bar-row">
+        <span class="bar-label">Medan</span>
+        <div class="bar-track"><div class="bar-fill" style="width:38%;background:#7c3aed"><span>38%</span></div></div>
+      </div>
+      <div class="bar-row">
+        <span class="bar-label">Bali</span>
+        <div class="bar-track"><div class="bar-fill" style="width:29%;background:#ec4899"><span>29%</span></div></div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ══════════════════════════════════════════
+       13. TIMELINE
+  ══════════════════════════════════════════ -->
+  <div class="section">
+    <div class="section-title"><span class="num">13</span> Timeline</div>
+    <div class="timeline">
+      <div class="tl-item">
+        <div class="tl-dot done"></div>
+        <div class="tl-date">Jan 2024</div>
+        <div class="tl-title">Inisiasi Proyek ServiceDesk v3</div>
+        <div class="tl-desc">Kickoff meeting, definisi scope, ERD awal, teknologi stack Laravel 11 + Inertia + Vue 3.</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-dot done"></div>
+        <div class="tl-date">Mar 2024</div>
+        <div class="tl-title">Core Module Selesai</div>
+        <div class="tl-desc">Service Order, Inventory, Customer Management, dan Permission Registry 39 fitur sudah live.</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-dot warn"></div>
+        <div class="tl-date">Jun 2024</div>
+        <div class="tl-title">Billing &amp; Reporting Module</div>
+        <div class="tl-desc">Invoice generation, payment tracking, dan laporan keuangan sedang dalam development.</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-dot"></div>
+        <div class="tl-date">Sep 2024</div>
+        <div class="tl-title">Production Launch</div>
+        <div class="tl-desc">Target go-live dengan full UAT dan migrasi data dari sistem lama.</div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ══════════════════════════════════════════
+       14. CARDS GRID
+  ══════════════════════════════════════════ -->
+  <div class="section">
+    <div class="section-title"><span class="num">14</span> Card Components</div>
+    <div class="cards-grid">
+      <div class="card">
+        <div class="card-img" style="background:linear-gradient(135deg,#4f46e5,#7c3aed)">🧩</div>
+        <div class="card-body">
+          <div class="card-title">Nexus Identity</div>
+          <div class="card-text">SSO platform multi-tenant dengan Duende IdentityServer dan OIDC.</div>
+        </div>
+        <div class="card-footer">v2.3 • .NET 8</div>
+      </div>
+      <div class="card">
+        <div class="card-img" style="background:linear-gradient(135deg,#22c55e,#14b8a6)">💳</div>
+        <div class="card-body">
+          <div class="card-title">PayBridge</div>
+          <div class="card-text">Payment aggregator dengan QRIS, SSE realtime, dan QZ Tray thermal print.</div>
+        </div>
+        <div class="card-footer">v1.8 • .NET 8</div>
+      </div>
+      <div class="card">
+        <div class="card-img" style="background:linear-gradient(135deg,#f97316,#ec4899)">🔧</div>
+        <div class="card-body">
+          <div class="card-title">ServiceDesk v3</div>
+          <div class="card-text">Workshop management system berbasis Laravel 11 + Inertia + Vue 3.</div>
+        </div>
+        <div class="card-footer">v3.0 • Laravel 11</div>
+      </div>
+      <div class="card">
+        <div class="card-img" style="background:linear-gradient(135deg,#0891b2,#3b82f6)">👥</div>
+        <div class="card-body">
+          <div class="card-title">UPHR / HRDesk</div>
+          <div class="card-text">HRIS platform: payroll, attendance, leave, roster, remuneration.</div>
+        </div>
+        <div class="card-footer">v4.1 • .NET 8</div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ══════════════════════════════════════════
+       15. INVOICE TEMPLATE
+  ══════════════════════════════════════════ -->
+  <div class="section">
+    <div class="section-title"><span class="num">15</span> Invoice / Document Layout</div>
+    <div style="border:1px solid var(--gray-200);border-radius:10px;padding:20px">
+      <div class="invoice-header">
+        <div>
+          <div class="invoice-logo">◆ Nexus Corp</div>
+          <div style="font-size:11px;color:var(--gray-700);margin-top:4px">
+            Jl. Sudirman No. 88, Jakarta Selatan<br>
+            NPWP: 01.234.567.8-001.000<br>
+            hello@nexuscorp.id
+          </div>
+        </div>
+        <div class="invoice-meta">
+          <div style="font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--gray-400)">Invoice</div>
+          <div class="inv-num">#INV-2024-0847</div>
+          <div style="margin-top:6px">
+            <div>Tanggal: <strong>15 Juli 2024</strong></div>
+            <div>Jatuh Tempo: <strong>15 Agustus 2024</strong></div>
+          </div>
+          <div style="margin-top:8px">
+            <span style="background:#dcfce7;color:#166534;padding:3px 10px;border-radius:10px;font-size:11px;font-weight:700">Lunas</span>
+          </div>
+        </div>
+      </div>
+      <div class="invoice-parties">
+        <div class="party-box">
+          <div class="party-label">Dari</div>
+          <div class="party-name">Nexus Corp</div>
+          Jl. Sudirman No. 88, Jakarta Selatan<br>
+          DKI Jakarta 12190
+        </div>
+        <div class="party-box">
+          <div class="party-label">Kepada</div>
+          <div class="party-name">PT. Alvindo Catur Sentosa</div>
+          Kawasan Industri EJIP Plot 5A,<br>
+          Cikarang Selatan, Bekasi 17550
+        </div>
+      </div>
+      <table style="margin-bottom:16px">
+        <thead>
+          <tr>
+            <th>No</th><th>Deskripsi</th><th>Qty</th><th>Harga Satuan</th><th>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>1</td>
+            <td>Lisensi ServiceDesk v3 — Annual</td>
+            <td>1</td><td>Rp 4.500.000</td><td>Rp 4.500.000</td>
+          </tr>
+          <tr>
+            <td>2</td>
+            <td>Implementasi &amp; Konfigurasi</td>
+            <td>8 jam</td><td>Rp 350.000</td><td>Rp 2.800.000</td>
+          </tr>
+          <tr>
+            <td>3</td>
+            <td>Training &amp; Onboarding (5 user)</td>
+            <td>1 sesi</td><td>Rp 1.200.000</td><td>Rp 1.200.000</td>
+          </tr>
+          <tr>
+            <td>4</td>
+            <td>Support Maintenance — 3 bulan</td>
+            <td>3</td><td>Rp 500.000</td><td>Rp 1.500.000</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="invoice-total-row">
+        <div class="invoice-totals">
+          <div class="inv-row"><span>Subtotal</span><span>Rp 10.000.000</span></div>
+          <div class="inv-row"><span>Diskon (5%)</span><span style="color:var(--success)">- Rp 500.000</span></div>
+          <div class="inv-row"><span>PPN 11%</span><span>Rp 1.045.000</span></div>
+          <div class="inv-row total"><span>TOTAL</span><span>Rp 10.545.000</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ══════════════════════════════════════════
+       16. LAYOUT DEMO & WATERMARK
+  ══════════════════════════════════════════ -->
+  <div class="section">
+    <div class="section-title"><span class="num">16</span> Complex Layout &amp; Watermark</div>
+    <div class="layout-demo" style="margin-bottom:16px">
+      <div class="layout-header">Sidebar + Main Content Layout (CSS Grid)</div>
+      <div class="layout-body">
+        <div class="layout-sidebar">
+          <p style="font-weight:700;margin-bottom:8px">Navigation</p>
+          <ul style="font-size:11px;padding-left:14px">
+            <li>Dashboard</li>
+            <li>Service Order</li>
+            <li>Inventory</li>
+            <li>Customers</li>
+            <li>Reports</li>
+            <li>Settings</li>
+          </ul>
+        </div>
+        <div class="layout-main">
+          <p style="font-weight:700;margin-bottom:8px">Main Content Area</p>
+          <p style="font-size:11px;color:var(--gray-700)">Ini adalah area konten utama. CSS Grid layout ini menguji kemampuan converter dalam merender grid dua kolom secara akurat di PDF output.</p>
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <div style="flex:1;background:var(--brand-lt);border-radius:6px;padding:8px;text-align:center;font-size:11px"><strong>42</strong><br>Open</div>
+            <div style="flex:1;background:#f0fdf4;border-radius:6px;padding:8px;text-align:center;font-size:11px"><strong>128</strong><br>Closed</div>
+            <div style="flex:1;background:#fffbeb;border-radius:6px;padding:8px;text-align:center;font-size:11px"><strong>7</strong><br>Overdue</div>
+          </div>
+        </div>
+      </div>
+      <div class="layout-footer">ServiceDesk v3 © 2024 Nexus Corp — All rights reserved</div>
+    </div>
+
+    <div class="watermark-demo">
+      <div class="watermark-text">CONFIDENTIAL</div>
+      <p style="font-size:12px;color:var(--gray-700)">
+        <strong>Watermark Test:</strong> Dokumen ini mengandung watermark teks "CONFIDENTIAL" yang dirender menggunakan CSS <code>position:absolute</code> + <code>rotate</code> + <code>opacity</code>. Pastikan PDF converter dapat me-render positioning absolute dengan benar di dalam container relatif.
+      </p>
+      <p style="font-size:11px;margin-top:8px;color:var(--gray-400)">Ini juga menguji rendering teks semi-transparan (opacity rendah) pada background putih.</p>
+    </div>
+  </div>
+
+
+  <!-- ══════════════════════════════════════════
+       17. RESPONSIVE GRID TEST
+  ══════════════════════════════════════════ -->
+  <div class="section">
+    <div class="section-title"><span class="num">17</span> Grid Layout Responsiveness</div>
+    <div class="resp-grid">
+      <div class="resp-cell">Col A</div>
+      <div class="resp-cell">Col B</div>
+      <div class="resp-cell">Col C</div>
+      <div class="resp-cell">Col D</div>
+    </div>
+
+    <div style="margin-top:12px;display:grid;grid-template-columns:2fr 1fr;gap:12px">
+      <div style="background:var(--gray-50);border:1px solid var(--gray-200);border-radius:8px;padding:12px;font-size:11px">
+        <strong>2/3 Column</strong><br>
+        Kolom kiri mengambil 2/3 lebar halaman menggunakan <code>grid-template-columns: 2fr 1fr</code>.
+      </div>
+      <div style="background:var(--brand-lt);border:1px solid var(--brand);border-radius:8px;padding:12px;font-size:11px;color:var(--brand)">
+        <strong>1/3 Column</strong><br>
+        Kolom kanan 1/3 lebar.
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ══════════════════════════════════════════
+       18. MIXED CONTENT TEST
+  ══════════════════════════════════════════ -->
+  <div class="section">
+    <div class="section-title"><span class="num">18</span> Mixed Content &amp; Edge Cases</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div>
+        <p style="font-size:11px;font-weight:700;margin-bottom:6px">Long unbroken text</p>
+        <p style="font-size:11px;word-break:break-all;background:var(--gray-50);padding:8px;border-radius:6px;border:1px solid var(--gray-200)">
+          ThisIsAVeryLongWordWithoutAnySpacesOrBreaksToTestWordBreakAndOverflowHandlingInThePDFConverter12345678901234567890
+        </p>
+      </div>
+      <div>
+        <p style="font-size:11px;font-weight:700;margin-bottom:6px">Unicode &amp; Emoji</p>
+        <p style="font-size:13px;line-height:2;background:var(--gray-50);padding:8px;border-radius:6px;border:1px solid var(--gray-200)">
+          🚀 🎯 ✅ ⚠️ 🔥 💡 📊 🏆<br>
+          中文 日本語 한국어 العربية<br>
+          Ñoño • Ünïcödé • Ø∞≠ΩÅ
+        </p>
+      </div>
+      <div>
+        <p style="font-size:11px;font-weight:700;margin-bottom:6px">Nested Div Shadows &amp; Borders</p>
+        <div style="border:2px solid var(--brand);border-radius:8px;padding:8px;box-shadow:4px 4px 0 var(--brand-lt)">
+          <div style="border:1px dashed var(--gray-400);border-radius:4px;padding:6px;font-size:11px">
+            <div style="background:var(--brand-lt);border-radius:4px;padding:6px;font-size:10px">
+              Triple nested → border, box-shadow, background rendering test.
+            </div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <p style="font-size:11px;font-weight:700;margin-bottom:6px">Flexbox Alignment</p>
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;padding:5px 8px;background:var(--gray-50);border-radius:5px">
+            <span>CPU Usage</span><span style="font-weight:700;color:var(--warn)">78%</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;padding:5px 8px;background:var(--gray-50);border-radius:5px">
+            <span>Memory</span><span style="font-weight:700;color:var(--success)">4.2 GB</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;padding:5px 8px;background:var(--gray-50);border-radius:5px">
+            <span>Disk I/O</span><span style="font-weight:700;color:var(--danger)">92%</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ══════════════════════════════════════════
+       FOOTER
+  ══════════════════════════════════════════ -->
+  <hr />
+  <div class="doc-footer">
+    <div>HTML to PDF Feature Test v1.0<br>Generated: July 2024</div>
+    <div class="center">
+      <strong>Nexus Corp</strong><br>
+      nexuscorp.id
+    </div>
+    <div class="right">
+      Halaman ini berisi 18 section<br>mencakup seluruh fitur HTML rendering
+    </div>
+  </div>
+
+</div><!-- /page-wrap -->
+
+</body>
+</html>

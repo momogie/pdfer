@@ -18,15 +18,28 @@ public sealed class TableLayoutEngine
 
     private void ComputeColumnWidths(TableDefinition table, TableLayoutResult result, float availableWidth)
     {
-        int colCount = table.ColumnCount;
+        int colCount = Math.Max(table.ColumnCount, table.FixedColWidths.Count);
         var colWidths = new float[colCount];
         var minWidths = new float[colCount];
         var maxWidths = new float[colCount];
         var fixedCols = new bool[colCount];
 
+        bool isFixedLayout = table.IsFixedLayout;
+
+        // Apply fixed column widths from <colgroup>/<col>
+        for (int i = 0; i < table.FixedColWidths.Count && i < colCount; i++)
+        {
+            if (table.FixedColWidths[i] > 0)
+            {
+                colWidths[i] = table.FixedColWidths[i];
+                fixedCols[i] = true;
+            }
+        }
+
         for (int i = 0; i < colCount; i++)
         {
-            colWidths[i] = availableWidth / colCount;
+            if (colWidths[i] <= 0)
+                colWidths[i] = availableWidth / colCount;
             minWidths[i] = 10f;
             maxWidths[i] = availableWidth;
         }
@@ -46,52 +59,101 @@ public sealed class TableLayoutEngine
                     if (c < colCount)
                     {
                         minWidths[c] = Math.Max(minWidths[c], minPerCol);
-                        maxWidths[c] = Math.Min(Math.Max(maxWidths[c], maxPerCol), availableWidth);
+                        if (!isFixedLayout)
+                            maxWidths[c] = Math.Min(Math.Max(maxWidths[c], maxPerCol), availableWidth);
                     }
                 }
 
-                if (cell.Style?.TryGetProperty("width", out var wVal) == true && float.TryParse(wVal.RawValue?.Replace("px", "").Replace("pt", ""), out float w) && w > 0)
+                // Cell-level width attribute
+                var cellWidthVal = cell.Style?.GetPropertyValue("width")
+                    ?? cell.ComputedStyle?.GetPropertyValue("width");
+                if (!string.IsNullOrWhiteSpace(cellWidthVal) && cellWidthVal != "auto")
                 {
-                    float perColWidth = w / cell.ColSpan;
-                    for (int c = col; c < spanEnd && c < colCount; c++)
+                    float perColWidth = 0;
+                    var wv = cellWidthVal.Trim().ToLowerInvariant();
+                    if (wv.EndsWith("px") && float.TryParse(wv[..^2], out var wPx))
+                        perColWidth = wPx * 0.2646f / cell.ColSpan;
+                    else if (wv.EndsWith("pt") && float.TryParse(wv[..^2], out var wPt))
+                        perColWidth = wPt * 0.3528f / cell.ColSpan;
+                    else if (wv.EndsWith("mm") && float.TryParse(wv[..^2], out var wMm))
+                        perColWidth = wMm / cell.ColSpan;
+                    else if (float.TryParse(wv, out var wRaw) && wRaw > 0)
+                        perColWidth = wRaw / cell.ColSpan;
+
+                    if (perColWidth > 0)
                     {
-                        colWidths[c] = Math.Max(colWidths[c], perColWidth);
-                        fixedCols[c] = true;
+                        for (int c = col; c < spanEnd && c < colCount; c++)
+                        {
+                            if (!fixedCols[c] || perColWidth > colWidths[c])
+                                colWidths[c] = perColWidth;
+                            fixedCols[c] = true;
+                        }
                     }
                 }
             }
         }
 
-        float totalMin = minWidths.Sum();
-        float remaining = availableWidth;
-
-        if (totalMin >= availableWidth)
+        if (isFixedLayout)
         {
-            for (int i = 0; i < colCount; i++)
-                colWidths[i] = minWidths[i];
-        }
-        else
-        {
+            // In fixed layout, distribute remaining space proportionally
             float fixedTotal = 0;
             int autoCount = 0;
             for (int i = 0; i < colCount; i++)
             {
                 if (fixedCols[i])
-                {
-                    colWidths[i] = Math.Max(colWidths[i], minWidths[i]);
                     fixedTotal += colWidths[i];
-                }
-                else autoCount++;
+                else
+                    autoCount++;
             }
 
-            remaining = availableWidth - fixedTotal;
-            if (autoCount > 0)
+            float remaining = availableWidth - fixedTotal;
+            if (autoCount > 0 && remaining > 0)
             {
-                float autoWidth = Math.Max(0, remaining / autoCount);
+                float autoWidth = remaining / autoCount;
+                for (int i = 0; i < colCount; i++)
+                    if (!fixedCols[i])
+                        colWidths[i] = autoWidth;
+            }
+            else if (autoCount > 0 && remaining <= 0)
+            {
+                for (int i = 0; i < colCount; i++)
+                    if (!fixedCols[i])
+                        colWidths[i] = minWidths[i];
+            }
+        }
+        else
+        {
+            float totalMin = minWidths.Sum();
+            float remaining = availableWidth;
+
+            if (totalMin >= availableWidth)
+            {
+                for (int i = 0; i < colCount; i++)
+                    colWidths[i] = minWidths[i];
+            }
+            else
+            {
+                float fixedTotal = 0;
+                int autoCount = 0;
                 for (int i = 0; i < colCount; i++)
                 {
-                    if (!fixedCols[i])
-                        colWidths[i] = Math.Max(minWidths[i], autoWidth);
+                    if (fixedCols[i])
+                    {
+                        colWidths[i] = Math.Max(colWidths[i], minWidths[i]);
+                        fixedTotal += colWidths[i];
+                    }
+                    else autoCount++;
+                }
+
+                remaining = availableWidth - fixedTotal;
+                if (autoCount > 0)
+                {
+                    float autoWidth = Math.Max(0, remaining / autoCount);
+                    for (int i = 0; i < colCount; i++)
+                    {
+                        if (!fixedCols[i])
+                            colWidths[i] = Math.Max(minWidths[i], autoWidth);
+                    }
                 }
             }
         }
