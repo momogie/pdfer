@@ -653,6 +653,22 @@ public sealed class PdfConverterIntegrationTests : IDisposable
         Assert.Contains("rg", text);
     }
 
+    [Fact]
+    public void ConvertHtmlToPdf_CssColor_RendersTextColor()
+    {
+        var converter = _services.GetRequiredService<IPdfConverter>();
+        var html = """
+            <html><head><style>p { color: red; }</style></head>
+            <body><p>Red text</p></body></html>
+            """;
+
+        var pdf = converter.ConvertHtmlToPdf(html);
+        var text = System.Text.Encoding.ASCII.GetString(pdf);
+
+        // red = 255,0,0 → 1.00 0.00 0.00 rg
+        Assert.Contains("rg", text);
+    }
+
     public void Dispose()
     {
         if (!_disposed)

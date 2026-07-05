@@ -331,6 +331,18 @@ public sealed class PdfWriter
             if (!usedFonts.Contains(fontIdx))
                 usedFonts.Add(fontIdx);
 
+            // Text color
+            string? textColorVal = null;
+            if (style != null)
+                textColorVal = style.GetPropertyValue("color");
+            if (!string.IsNullOrWhiteSpace(textColorVal) && textColorVal != "transparent" && textColorVal != "rgba(0, 0, 0, 0)")
+            {
+                if (colorParser.TryParse(textColorVal, out var tcDocColor) && tcDocColor is RgbColor tcRgb && tcRgb.A > 0)
+                {
+                    sb.AppendLine($"{tcRgb.R / 255f:F2} {tcRgb.G / 255f:F2} {tcRgb.B / 255f:F2} rg");
+                }
+            }
+
             sb.Append("BT\n");
             sb.AppendLine($"{_fontEntries[fontIdx].FontKey} {fontSizePt:F2} Tf");
             sb.AppendLine($"{blockXPt:F2} {blockYPt:F2} Td");
