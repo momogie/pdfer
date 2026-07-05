@@ -101,6 +101,22 @@ public sealed class LayoutEngine
             _currentY += box.MarginTop;
             box.Y = _currentY;
 
+            // CSS float support
+            var cssFloat = box.ComputedStyle?.GetPropertyValue("float");
+            if (!string.IsNullOrWhiteSpace(cssFloat) && cssFloat != "none")
+            {
+                if (cssFloat == "left")
+                {
+                    box.Type = BlockBoxType.FloatLeft;
+                    box.X = _currentPage.ContentBox.X;
+                }
+                else if (cssFloat == "right")
+                {
+                    box.Type = BlockBoxType.FloatRight;
+                    box.X = _currentPage.ContentBox.Right - box.Width;
+                }
+            }
+
             var fontSize = GetFontSize(box.ComputedStyle);
             if (box.Height <= 0)
                 box.Height = fontSize * 1.3f + box.PaddingTop + box.PaddingBottom;

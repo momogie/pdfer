@@ -276,7 +276,15 @@ public sealed class PdfWriter
         var sb = new StringBuilder();
         var colorParser = new ColorParser();
 
-        foreach (var block in page.Blocks)
+        // Collect blocks: header + regular + footer
+        var allBlocks = new List<BlockBox>();
+        if (page.Header?.RenderedContent != null && ShouldShowHeaderFooter(page.PageNumber, page.Header))
+            allBlocks.Add(page.Header.RenderedContent);
+        allBlocks.AddRange(page.Blocks);
+        if (page.Footer?.RenderedContent != null && ShouldShowHeaderFooter(page.PageNumber, page.Footer))
+            allBlocks.Add(page.Footer.RenderedContent);
+
+        foreach (var block in allBlocks)
         {
             var style = block.ComputedStyle;
             bool hasBorders = block.BorderTop > 0 || block.BorderBottom > 0 || block.BorderLeft > 0 || block.BorderRight > 0;
@@ -408,43 +416,6 @@ public sealed class PdfWriter
             if (style != null)
                 textAlign = style.GetPropertyValue("text-align");
 
-            float textOffsetX = 0;
-            float extraWordSpacing = 0;
-            int wordCount = 0;
-            if (textAlign is "center" or "right" or "justify")
-            {
-                float textWidthPt = 0;
-                if (block.InlineContent.Count > 0)
-                {
-                    foreach (var inline in block.InlineContent)
-                    {
-                        if (inline.Type == InlineBoxType.Text && inline.Text != null)
-                        {
-                            textWidthPt += inline.Text.Length * fontSizePt * 0.5f;
-                            wordCount += inline.Text.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
-                        }
-                    }
-                }
-                else if (!string.IsNullOrEmpty(block.TextContent))
-                {
-                    textWidthPt = block.TextContent.Length * fontSizePt * 0.5f;
-                    wordCount = block.TextContent.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
-                }
-
-                float contentWidthPt = block.ContentWidth * MmToPt;
-
-                if (textAlign == "center")
-                    textOffsetX = Math.Max(0, (contentWidthPt - textWidthPt) / 2);
-                else if (textAlign == "right")
-                    textOffsetX = Math.Max(0, contentWidthPt - textWidthPt);
-                else if (textAlign == "justify" && wordCount > 1)
-                {
-                    float extraSpace = contentWidthPt - textWidthPt;
-                    if (extraSpace > 0)
-                        extraWordSpacing = extraSpace / (wordCount - 1);
-                }
-            }
-
             // Emit text block (BT/ET) only if there is text content
             bool hasText = false;
             if (block.InlineContent.Count > 0)
@@ -463,88 +434,38 @@ public sealed class PdfWriter
 
             if (hasText)
             {
-                sb.Append("BT\n");
-                sb.AppendLine($"{_fontEntries[fontIdx].FontKey} {fontSizePt:F2} Tf");
+                string? simpleText = null;
+                InlineBox? singleInlineForDeco = null;
+                bool isSimpleText = false;
 
-                if (extraWordSpacing > 0)
-                    sb.AppendLine($"{extraWordSpacing:F2} Tw");
-
-                sb.AppendLine($"{blockXPt + textOffsetX:F2} {blockYPt:F2} Td");
-
-                if (block.InlineContent.Count > 0)
+                if (block.InlineContent.Count == 0 && !string.IsNullOrEmpty(block.TextContent))
                 {
-                    foreach (var inline in block.InlineContent)
-                    {
-                        if (inline.Type == InlineBoxType.Text && inline.Text != null)
-                        {
-                            sb.AppendLine($"{FormatPdfText(inline.Text)} Tj");
-                        }
-                    }
+                    simpleText = block.TextContent;
+                    isSimpleText = true;
                 }
-                else if (!string.IsNullOrEmpty(block.TextContent))
+                else if (block.InlineContent.Count == 1 && block.InlineContent[0].Type == InlineBoxType.Text && block.InlineContent[0].Text != null)
                 {
-                    sb.AppendLine($"{FormatPdfText(block.TextContent)} Tj");
+                    simpleText = block.InlineContent[0].Text;
+                    singleInlineForDeco = block.InlineContent[0];
+                    isSimpleText = true;
                 }
 
-                sb.Append("ET\n");
+                float lineHeightPt = fontSizePt * GetLineHeight(style, 1.2f);
+                float contentWidthPt = block.ContentWidth * MmToPt;
 
-                if (extraWordSpacing > 0)
-                    sb.AppendLine("0 Tw");
-            }
-
-            // Text decoration (underline, line-through, overline)
-            if (block.InlineContent.Count > 0)
-            {
-                foreach (var inline in block.InlineContent)
+                if (isSimpleText && !string.IsNullOrEmpty(simpleText))
                 {
-                    if (inline.Type != InlineBoxType.Text || inline.Text == null)
-                        continue;
-
-                    var inlineStyle = inline.ComputedStyle ?? block.ComputedStyle;
-                    string? decoration = null;
-                    if (inlineStyle != null)
-                        decoration = inlineStyle.GetPropertyValue("text-decoration-line");
-
-                    if (string.IsNullOrWhiteSpace(decoration) || decoration == "none")
-                        continue;
-
-                    float inlineXPt = inline.X * MmToPt + marginLeftPt;
-                    float inlineYPt = pageH - (inline.Y * MmToPt) - marginTopPt;
-                    float inlineWidthPt = inline.Text.Length * fontSizePt * 0.5f;
-
-                    // Stroke color from text color
-                    string? decoColorStr = null;
-                    if (inlineStyle != null)
-                        decoColorStr = inlineStyle.GetPropertyValue("color");
-                    if (!string.IsNullOrWhiteSpace(decoColorStr) && decoColorStr != "transparent" && decoColorStr != "rgba(0, 0, 0, 0)")
-                    {
-                        if (colorParser.TryParse(decoColorStr, out var dc) && dc is RgbColor decoRgb && decoRgb.A > 0)
-                            sb.AppendLine($"{decoRgb.R / 255f:F2} {decoRgb.G / 255f:F2} {decoRgb.B / 255f:F2} RG");
-                        else
-                            sb.AppendLine("0 0 0 RG");
-                    }
-                    else
-                    {
-                        sb.AppendLine("0 0 0 RG");
-                    }
-
-                    sb.AppendLine($"{Math.Max(0.4f, fontSizePt * 0.05f):F2} w");
-
-                    if (decoration.Contains("underline"))
-                    {
-                        float uy = inlineYPt - fontSizePt * 0.05f;
-                        sb.AppendLine($"{inlineXPt:F2} {uy:F2} m {inlineXPt + inlineWidthPt:F2} {uy:F2} l S");
-                    }
-                    if (decoration.Contains("line-through"))
-                    {
-                        float ty = inlineYPt + fontSizePt * 0.4f;
-                        sb.AppendLine($"{inlineXPt:F2} {ty:F2} m {inlineXPt + inlineWidthPt:F2} {ty:F2} l S");
-                    }
-                    if (decoration.Contains("overline"))
-                    {
-                        float oy = inlineYPt + fontSizePt * 0.85f;
-                        sb.AppendLine($"{inlineXPt:F2} {oy:F2} m {inlineXPt + inlineWidthPt:F2} {oy:F2} l S");
-                    }
+                    WriteSimpleTextBlock(sb, simpleText, singleInlineForDeco,
+                        contentWidthPt, lineHeightPt, blockXPt, blockYPt,
+                        fontSizePt, textAlign, fontFamily, bold, italic, fontIdx,
+                        style, colorParser);
+                }
+                else if (block.InlineContent.Count > 0)
+                {
+                    WriteInlineContentBlock(sb, block,
+                        contentWidthPt, blockXPt, blockYPt,
+                        fontSizePt, textAlign, fontIdx,
+                        marginLeftPt, marginTopPt, pageH, colorParser);
                 }
             }
         }
@@ -557,6 +478,274 @@ public sealed class PdfWriter
         _buffer.AppendLine("endstream");
         _buffer.AppendLine("endobj");
         return num;
+    }
+
+    private void WriteSimpleTextBlock(StringBuilder sb, string text, InlineBox? decoInline,
+        float contentWidthPt, float lineHeightPt, float blockXPt, float blockYPt,
+        float fontSizePt, string? textAlign, string? fontFamily, bool bold, bool italic, int fontIdx,
+        CssDeclarationBlock? style, ColorParser colorParser)
+    {
+        var lines = new List<string>();
+        if (contentWidthPt > 4f)
+        {
+            var words = text.Split(' ');
+            var curLine = new List<string>();
+            float curWidth = 0;
+            float spaceWidth = MeasureTextWidth(" ", fontFamily, bold, italic, fontSizePt);
+
+            foreach (var word in words)
+            {
+                float wordWidth = MeasureTextWidth(word, fontFamily, bold, italic, fontSizePt);
+                if (curLine.Count > 0 && curWidth + spaceWidth + wordWidth > contentWidthPt)
+                {
+                    lines.Add(string.Join(" ", curLine));
+                    curLine.Clear();
+                    curWidth = 0;
+                }
+                if (curLine.Count > 0)
+                    curWidth += spaceWidth;
+                curLine.Add(word);
+                curWidth += wordWidth;
+            }
+            if (curLine.Count > 0)
+                lines.Add(string.Join(" ", curLine));
+        }
+        if (lines.Count == 0)
+            lines.Add(text);
+
+        sb.Append("BT\n");
+        sb.AppendLine($"{_fontEntries[fontIdx].FontKey} {fontSizePt:F2} Tf");
+
+        for (int i = 0; i < lines.Count; i++)
+        {
+            string line = lines[i];
+            float lineWidth = MeasureTextWidth(line, fontFamily, bold, italic, fontSizePt);
+
+            float lineOffsetX = 0;
+            float lineWordSpacing = 0;
+
+            if (textAlign == "center")
+                lineOffsetX = Math.Max(0, (contentWidthPt - lineWidth) / 2);
+            else if (textAlign == "right")
+                lineOffsetX = Math.Max(0, contentWidthPt - lineWidth);
+            else if (textAlign == "justify" && (i < lines.Count - 1 || lines.Count == 1) && line.Contains(' '))
+            {
+                int wc = line.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
+                if (wc > 1)
+                {
+                    float extra = contentWidthPt - lineWidth;
+                    if (extra > 0)
+                        lineWordSpacing = extra / (wc - 1);
+                }
+            }
+
+            float lineY = blockYPt - i * lineHeightPt;
+
+            if (i == 0)
+                sb.AppendLine($"{blockXPt + lineOffsetX:F2} {lineY:F2} Td");
+            else
+                sb.AppendLine($"1 0 0 1 {blockXPt + lineOffsetX:F2} {lineY:F2} Tm");
+
+            if (lineWordSpacing > 0)
+                sb.AppendLine($"{lineWordSpacing:F2} Tw");
+
+            if (!string.IsNullOrEmpty(line))
+                sb.AppendLine($"{FormatPdfText(line)} Tj");
+
+            if (lineWordSpacing > 0)
+                sb.AppendLine("0 Tw");
+        }
+
+        sb.Append("ET\n");
+
+        // Text decoration for simple text (per wrapped line)
+        var decoStyle = decoInline?.ComputedStyle ?? style;
+        string? decoration = null;
+        if (decoStyle != null)
+            decoration = decoStyle.GetPropertyValue("text-decoration-line");
+
+        if (!string.IsNullOrWhiteSpace(decoration) && decoration != "none")
+        {
+            string? dcStr = null;
+            if (decoStyle != null)
+                dcStr = decoStyle.GetPropertyValue("color");
+            if (!string.IsNullOrWhiteSpace(dcStr) && dcStr != "transparent" && dcStr != "rgba(0, 0, 0, 0)")
+            {
+                if (colorParser.TryParse(dcStr, out var dc) && dc is RgbColor drgb && drgb.A > 0)
+                    sb.AppendLine($"{drgb.R / 255f:F2} {drgb.G / 255f:F2} {drgb.B / 255f:F2} RG");
+                else
+                    sb.AppendLine("0 0 0 RG");
+            }
+            else
+                sb.AppendLine("0 0 0 RG");
+
+            sb.AppendLine($"{Math.Max(0.4f, fontSizePt * 0.05f):F2} w");
+
+            for (int i = 0; i < lines.Count; i++)
+            {
+                if (string.IsNullOrEmpty(lines[i])) continue;
+                float lineW = MeasureTextWidth(lines[i], fontFamily, bold, italic, fontSizePt);
+                float lineYDeco = blockYPt - i * lineHeightPt;
+
+                float lineLeftPt = blockXPt;
+                if (textAlign == "center")
+                    lineLeftPt += Math.Max(0, (contentWidthPt - lineW) / 2);
+                else if (textAlign == "right")
+                    lineLeftPt += Math.Max(0, contentWidthPt - lineW);
+
+                if (decoration.Contains("underline"))
+                {
+                    float uy = lineYDeco - fontSizePt * 0.05f;
+                    sb.AppendLine($"{lineLeftPt:F2} {uy:F2} m {lineLeftPt + lineW:F2} {uy:F2} l S");
+                }
+                if (decoration.Contains("line-through"))
+                {
+                    float ty = lineYDeco + fontSizePt * 0.4f;
+                    sb.AppendLine($"{lineLeftPt:F2} {ty:F2} m {lineLeftPt + lineW:F2} {ty:F2} l S");
+                }
+                if (decoration.Contains("overline"))
+                {
+                    float oy = lineYDeco + fontSizePt * 0.85f;
+                    sb.AppendLine($"{lineLeftPt:F2} {oy:F2} m {lineLeftPt + lineW:F2} {oy:F2} l S");
+                }
+            }
+        }
+    }
+
+    private void WriteInlineContentBlock(StringBuilder sb, BlockBox block,
+        float contentWidthPt, float blockXPt, float blockYPt,
+        float fontSizePt, string? textAlign, int fontIdx,
+        float marginLeftPt, float marginTopPt, float pageH, ColorParser colorParser)
+    {
+        float textOffsetX = 0;
+        float extraWordSpacing = 0;
+
+        if (textAlign is "center" or "right" or "justify")
+        {
+            float textWidthPt = 0;
+            int wordCount = 0;
+            foreach (var inline in block.InlineContent)
+            {
+                if (inline.Type == InlineBoxType.Text && inline.Text != null)
+                {
+                    textWidthPt += inline.Text.Length * fontSizePt * 0.5f;
+                    wordCount += inline.Text.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
+                }
+            }
+
+            if (textAlign == "center")
+                textOffsetX = Math.Max(0, (contentWidthPt - textWidthPt) / 2);
+            else if (textAlign == "right")
+                textOffsetX = Math.Max(0, contentWidthPt - textWidthPt);
+            else if (textAlign == "justify" && wordCount > 1)
+            {
+                float extraSpace = contentWidthPt - textWidthPt;
+                if (extraSpace > 0)
+                    extraWordSpacing = extraSpace / (wordCount - 1);
+            }
+        }
+
+        // Draw inline background colors before text (outside BT/ET)
+        foreach (var inline in block.InlineContent)
+        {
+            if (inline.Type != InlineBoxType.Text || inline.Text == null)
+                continue;
+
+            var bgStyle = inline.ComputedStyle ?? block.ComputedStyle;
+            string? ibg = null;
+            if (bgStyle != null)
+                ibg = bgStyle.GetPropertyValue("background-color");
+            if (string.IsNullOrWhiteSpace(ibg) || ibg == "transparent" || ibg == "rgba(0, 0, 0, 0)")
+                continue;
+
+            if (colorParser.TryParse(ibg, out var bgDocColor) && bgDocColor is RgbColor bgRgb && bgRgb.A > 0)
+            {
+                float ibgLeft = inline.X * MmToPt + marginLeftPt;
+                float ibgBottom = pageH - ((inline.Y + inline.Height) * MmToPt) - marginTopPt;
+                float ibgWidth = inline.Width * MmToPt;
+                float ibgHeight = inline.Height * MmToPt;
+
+                sb.AppendLine($"{bgRgb.R / 255f:F2} {bgRgb.G / 255f:F2} {bgRgb.B / 255f:F2} rg");
+                sb.AppendLine($"{ibgLeft:F2} {ibgBottom:F2} {ibgWidth:F2} {ibgHeight:F2} re f");
+            }
+        }
+
+        sb.Append("BT\n");
+        sb.AppendLine($"{_fontEntries[fontIdx].FontKey} {fontSizePt:F2} Tf");
+
+        if (extraWordSpacing > 0)
+            sb.AppendLine($"{extraWordSpacing:F2} Tw");
+
+        sb.AppendLine($"{blockXPt + textOffsetX:F2} {blockYPt:F2} Td");
+
+        foreach (var inline in block.InlineContent)
+        {
+            if (inline.Type == InlineBoxType.Text && inline.Text != null)
+                sb.AppendLine($"{FormatPdfText(inline.Text)} Tj");
+        }
+
+        sb.Append("ET\n");
+
+        if (extraWordSpacing > 0)
+            sb.AppendLine("0 Tw");
+
+        // Text decoration for inline content (per inline item)
+        foreach (var inline in block.InlineContent)
+        {
+            if (inline.Type != InlineBoxType.Text || inline.Text == null)
+                continue;
+
+            var inlineStyle = inline.ComputedStyle ?? block.ComputedStyle;
+            string? inlineDecoration = null;
+            if (inlineStyle != null)
+                inlineDecoration = inlineStyle.GetPropertyValue("text-decoration-line");
+
+            if (string.IsNullOrWhiteSpace(inlineDecoration) || inlineDecoration == "none")
+                continue;
+
+            float inlineXPt = inline.X * MmToPt + marginLeftPt;
+            float inlineYPt = pageH - (inline.Y * MmToPt) - marginTopPt;
+            float inlineWidthPt = inline.Text.Length * fontSizePt * 0.5f;
+
+            string? decoColorStr = null;
+            if (inlineStyle != null)
+                decoColorStr = inlineStyle.GetPropertyValue("color");
+            if (!string.IsNullOrWhiteSpace(decoColorStr) && decoColorStr != "transparent" && decoColorStr != "rgba(0, 0, 0, 0)")
+            {
+                if (colorParser.TryParse(decoColorStr, out var dc) && dc is RgbColor decoRgb && decoRgb.A > 0)
+                    sb.AppendLine($"{decoRgb.R / 255f:F2} {decoRgb.G / 255f:F2} {decoRgb.B / 255f:F2} RG");
+                else
+                    sb.AppendLine("0 0 0 RG");
+            }
+            else
+                sb.AppendLine("0 0 0 RG");
+
+            sb.AppendLine($"{Math.Max(0.4f, fontSizePt * 0.05f):F2} w");
+
+            if (inlineDecoration.Contains("underline"))
+            {
+                float uy = inlineYPt - fontSizePt * 0.05f;
+                sb.AppendLine($"{inlineXPt:F2} {uy:F2} m {inlineXPt + inlineWidthPt:F2} {uy:F2} l S");
+            }
+            if (inlineDecoration.Contains("line-through"))
+            {
+                float ty = inlineYPt + fontSizePt * 0.4f;
+                sb.AppendLine($"{inlineXPt:F2} {ty:F2} m {inlineXPt + inlineWidthPt:F2} {ty:F2} l S");
+            }
+            if (inlineDecoration.Contains("overline"))
+            {
+                float oy = inlineYPt + fontSizePt * 0.85f;
+                sb.AppendLine($"{inlineXPt:F2} {oy:F2} m {inlineXPt + inlineWidthPt:F2} {oy:F2} l S");
+            }
+        }
+    }
+
+    private static bool ShouldShowHeaderFooter(int pageNumber, HeaderFooterBox hf)
+    {
+        if (pageNumber == 1 && !hf.ShowOnFirstPage) return false;
+        if (pageNumber % 2 == 0 && !hf.ShowOnEvenPages) return false;
+        if (pageNumber % 2 == 1 && pageNumber > 1 && !hf.ShowOnOddPages) return false;
+        return true;
     }
 
     private int ResolveFontIndex(string? fontFamily, bool bold, bool italic)
@@ -618,6 +807,52 @@ public sealed class PdfWriter
             "larger" => defaultSize * 1.2f,
             _ => defaultSize
         };
+    }
+
+    private float MeasureTextWidth(string text, string? fontFamily, bool bold, bool italic, float fontSizePt)
+    {
+        if (string.IsNullOrEmpty(text))
+            return 0;
+
+        if (_fontRegistry == null)
+            return text.Length * fontSizePt * 0.5f;
+
+        var style = (bold, italic) switch
+        {
+            (true, true) => FontStyle.BoldItalic,
+            (true, false) => FontStyle.Bold,
+            (false, true) => FontStyle.Italic,
+            (false, false) => FontStyle.Regular
+        };
+
+        var metrics = _fontRegistry.GetMetrics(fontFamily ?? "sans-serif", style, fontSizePt);
+        if (metrics == null || metrics.AdvanceWidths == null)
+            return text.Length * fontSizePt * 0.5f;
+
+        float total = 0;
+        foreach (char c in text)
+            total += metrics.AdvanceWidths.TryGetValue(c, out var w) ? w : metrics.AdvanceWidths.GetValueOrDefault('n', fontSizePt * 0.5f);
+        return total;
+    }
+
+    private static float GetLineHeight(CssDeclarationBlock? style, float defaultFactor)
+    {
+        if (style == null) return defaultFactor;
+        var val = style.GetPropertyValue("line-height");
+        if (string.IsNullOrWhiteSpace(val)) return defaultFactor;
+        val = val.Trim().ToLowerInvariant();
+
+        if (float.TryParse(val, out var fv) && fv > 0)
+            return fv;
+
+        if (val.EndsWith("pt") && float.TryParse(val[..^2], out var pt))
+            return pt / 12f;
+        if (val.EndsWith("em") && float.TryParse(val[..^2], out var em))
+            return em;
+        if (val.EndsWith("%") && float.TryParse(val[..^1], out var pct))
+            return pct / 100f;
+
+        return defaultFactor;
     }
 
     private int AllocateObjectNumber() => _nextObjectNumber++;
