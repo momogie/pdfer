@@ -15,6 +15,7 @@ public sealed class LayoutEngine
     private DocumentLayout _document = null!;
     private PageLayout _currentPage = null!;
     private float _currentY;
+    public float CurrentY => _currentY;
     private BlockBox? _currentBlockContainer;
 
     public LayoutEngine(CssMerger cssMerger, CssNormalizer cssNormalizer, IUnitConverter unitConverter)
@@ -39,6 +40,11 @@ public sealed class LayoutEngine
         AddNewPage(config);
 
         return _document;
+    }
+
+    public void AdvanceY(float amount)
+    {
+        _currentY += amount;
     }
 
     private void AddNewPage(PdfConverterConfiguration config)
@@ -76,7 +82,7 @@ public sealed class LayoutEngine
 
         if (box.TagName is "h1" or "h2" or "h3" or "h4" or "h5" or "h6" or "p" or "div"
             or "li" or "ul" or "ol" or "blockquote" or "pre" or "section" or "article"
-            or "header" or "footer" or "nav" or "main")
+            or "header" or "footer" or "nav" or "main" or "td" or "th")
         {
             _currentY += box.MarginTop;
             box.Y = _currentY;

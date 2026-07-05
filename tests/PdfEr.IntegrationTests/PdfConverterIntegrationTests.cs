@@ -486,6 +486,140 @@ public sealed class PdfConverterIntegrationTests : IDisposable
         Assert.Contains("Content in article", text);
     }
 
+    [Fact]
+    public void ConvertHtmlToPdf_SimpleTable_RendersCellText()
+    {
+        var converter = _services.GetRequiredService<IPdfConverter>();
+        var html = """
+            <html><body>
+            <table><tr><td>Cell A1</td><td>Cell B1</td></tr></table>
+            </body></html>
+            """;
+
+        var pdf = converter.ConvertHtmlToPdf(html);
+        var text = System.Text.Encoding.ASCII.GetString(pdf);
+
+        Assert.Contains("Cell A1", text);
+        Assert.Contains("Cell B1", text);
+    }
+
+    [Fact]
+    public void ConvertHtmlToPdf_TableWithHeader_RendersAllCells()
+    {
+        var converter = _services.GetRequiredService<IPdfConverter>();
+        var html = """
+            <html><body>
+            <table>
+            <tr><th>Name</th><th>Age</th></tr>
+            <tr><td>Alice</td><td>30</td></tr>
+            <tr><td>Bob</td><td>25</td></tr>
+            </table>
+            </body></html>
+            """;
+
+        var pdf = converter.ConvertHtmlToPdf(html);
+        var text = System.Text.Encoding.ASCII.GetString(pdf);
+
+        Assert.True(PdfTextContains(text, "Name"));
+        Assert.True(PdfTextContains(text, "Age"));
+        Assert.True(PdfTextContains(text, "Alice"));
+        Assert.True(PdfTextContains(text, "30"));
+        Assert.True(PdfTextContains(text, "Bob"));
+        Assert.True(PdfTextContains(text, "25"));
+    }
+
+    [Fact]
+    public void ConvertHtmlToPdf_TableWithColspan_RendersCellText()
+    {
+        var converter = _services.GetRequiredService<IPdfConverter>();
+        var html = """
+            <html><body>
+            <table>
+            <tr><td colspan="2">Wide cell</td></tr>
+            <tr><td>Left</td><td>Right</td></tr>
+            </table>
+            </body></html>
+            """;
+
+        var pdf = converter.ConvertHtmlToPdf(html);
+        var text = System.Text.Encoding.ASCII.GetString(pdf);
+
+        Assert.True(PdfTextContains(text, "Wide cell"));
+        Assert.True(PdfTextContains(text, "Left"));
+        Assert.True(PdfTextContains(text, "Right"));
+    }
+
+    [Fact]
+    public void ConvertHtmlToPdf_TableWithSurroundingContent_RendersAllText()
+    {
+        var converter = _services.GetRequiredService<IPdfConverter>();
+        var html = """
+            <html><body>
+            <p>Before table</p>
+            <table><tr><td>In table</td></tr></table>
+            <p>After table</p>
+            </body></html>
+            """;
+
+        var pdf = converter.ConvertHtmlToPdf(html);
+        var text = System.Text.Encoding.ASCII.GetString(pdf);
+
+        Assert.Contains("Before table", text);
+        Assert.Contains("In table", text);
+        Assert.Contains("After table", text);
+    }
+
+    [Fact]
+    public void ConvertHtmlToPdf_MultipleTableRowsAndColumns_RendersAllCells()
+    {
+        var converter = _services.GetRequiredService<IPdfConverter>();
+        var html = """
+            <html><body>
+            <table>
+            <tr><td>Row1-Col1</td><td>Row1-Col2</td><td>Row1-Col3</td></tr>
+            <tr><td>Row2-Col1</td><td>Row2-Col2</td><td>Row2-Col3</td></tr>
+            <tr><td>Row3-Col1</td><td>Row3-Col2</td><td>Row3-Col3</td></tr>
+            </table>
+            </body></html>
+            """;
+
+        var pdf = converter.ConvertHtmlToPdf(html);
+        var text = System.Text.Encoding.ASCII.GetString(pdf);
+
+        Assert.True(PdfTextContains(text, "Row1-Col1"));
+        Assert.True(PdfTextContains(text, "Row1-Col2"));
+        Assert.True(PdfTextContains(text, "Row1-Col3"));
+        Assert.True(PdfTextContains(text, "Row2-Col1"));
+        Assert.True(PdfTextContains(text, "Row2-Col2"));
+        Assert.True(PdfTextContains(text, "Row2-Col3"));
+        Assert.True(PdfTextContains(text, "Row3-Col1"));
+        Assert.True(PdfTextContains(text, "Row3-Col2"));
+        Assert.True(PdfTextContains(text, "Row3-Col3"));
+    }
+
+    [Fact]
+    public void ConvertHtmlToPdf_TableInSection_RendersCellText()
+    {
+        var converter = _services.GetRequiredService<IPdfConverter>();
+        var html = """
+            <html><body>
+            <section>
+            <table><thead><tr><th>Header</th></tr></thead>
+            <tbody><tr><td>Body</td></tr></tbody>
+            <tfoot><tr><td>Footer</td></tr></tfoot>
+            </table>
+            </section>
+            </body></html>
+            """;
+
+        var pdf = converter.ConvertHtmlToPdf(html);
+        var text = System.Text.Encoding.ASCII.GetString(pdf);
+
+        Assert.True(PdfTextContains(text, "Header"));
+        Assert.True(PdfTextContains(text, "Body"));
+        Assert.True(PdfTextContains(text, "Footer"));
+    }
+
     public void Dispose()
     {
         if (!_disposed)

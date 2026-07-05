@@ -2,6 +2,7 @@ using AngleSharp.Dom;
 using PdfEr.Core.Application.Interfaces;
 using PdfEr.Core.Domain.Layout;
 using PdfEr.Core.Domain.Styles;
+using PdfEr.Core.Domain.Tables;
 using PdfEr.Core.Domain.Typography;
 
 namespace PdfEr.Core.Application.HtmlProcessing;
@@ -19,6 +20,7 @@ public sealed class TagContext
     public BlockBox? CurrentBlock { get; set; }
     public IFontRegistry FontRegistry { get; }
     public Stack<ListState> ListStack { get; set; }
+    public TableDefHolder? TableDef { get; set; }
 
     public TagContext(
         IElement element,
@@ -30,7 +32,8 @@ public sealed class TagContext
         PdfConverterConfiguration config,
         PageLayout currentPage,
         IFontRegistry fontRegistry,
-        Stack<ListState> listStack)
+        Stack<ListState> listStack,
+        TableDefHolder? tableDef = null)
     {
         Element = element;
         TagName = tagName;
@@ -42,7 +45,13 @@ public sealed class TagContext
         CurrentPage = currentPage;
         FontRegistry = fontRegistry;
         ListStack = listStack;
+        TableDef = tableDef;
     }
+}
+
+public sealed class TableDefHolder
+{
+    public TableDefinition? Current { get; set; }
 }
 
 public sealed class ListState

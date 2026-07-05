@@ -64,6 +64,10 @@ public static class DependencyInjection
         services.AddSingleton<ITagHandler, DelHandler>();
         services.AddSingleton<ITagHandler, QuoteHandler>();
         services.AddSingleton<ITagHandler, AbbrHandler>();
+        services.AddSingleton<ITagHandler, TableHandler>();
+        services.AddSingleton<ITagHandler, TableRowHandler>();
+        services.AddSingleton<ITagHandler, TableCellHandler>();
+        services.AddSingleton<ITagHandler, TableSectionHandler>();
 
         services.AddSingleton<TagRegistry>();
         services.AddSingleton<PdfWriter>();

@@ -30,6 +30,7 @@ public sealed class PdfConverterService : IPdfConverter
     private BlockBox? _currentBlock;
     private PdfConverterConfiguration _currentConfig = null!;
     private readonly Stack<ListState> _listStack = new();
+    private readonly TableDefHolder _tableDef = new();
 
     public PdfConverterService(
         HtmlParser htmlParser,
@@ -176,13 +177,13 @@ public sealed class PdfConverterService : IPdfConverter
                 if (IsDisplayNone(resolved))
                     continue;
 
-                if (_tagRegistry.HasHandler(tagName))
+                    if (_tagRegistry.HasHandler(tagName))
                 {
                     var savedBlock = _currentBlock;
 
                     var context = new TagContext(
                         el, tagName, attrs, resolved, parentStyle,
-                        _layoutEngine, _currentConfig, CurrentPage, _fontRegistry, _listStack);
+                        _layoutEngine, _currentConfig, CurrentPage, _fontRegistry, _listStack, _tableDef);
 
                     if (tagName is "ul" or "ol")
                     {
@@ -203,7 +204,8 @@ public sealed class PdfConverterService : IPdfConverter
                         _currentBlock = context.CurrentBlock;
                     }
 
-                    WalkDom(el, resolved);
+                    if (tagName is not "td" and not "th")
+                        WalkDom(el, resolved);
 
                     if (context.CurrentBlock != null)
                     {

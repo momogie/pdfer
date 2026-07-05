@@ -24,6 +24,7 @@ public sealed class TableCell
     public string? TextContent { get; set; }
     public int ColumnIndex { get; set; }
     public int RowIndex { get; set; }
+    public bool IsHeader { get; set; }
     public int ColSpan { get; set; } = 1;
     public int RowSpan { get; set; } = 1;
     public float Width { get; set; }
