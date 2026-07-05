@@ -255,10 +255,18 @@ public sealed class PdfWriter
 
         foreach (var block in page.Blocks)
         {
-            if (block.InlineContent.Count == 0 && string.IsNullOrEmpty(block.TextContent))
+            var style = block.ComputedStyle;
+            bool hasBorders = block.BorderTop > 0 || block.BorderBottom > 0 || block.BorderLeft > 0 || block.BorderRight > 0;
+            bool hasBackground = false;
+            if (style != null)
+            {
+                var bg = style.GetPropertyValue("background-color");
+                hasBackground = !string.IsNullOrWhiteSpace(bg) && bg != "transparent" && bg != "rgba(0, 0, 0, 0)";
+            }
+            if (block.InlineContent.Count == 0 && string.IsNullOrEmpty(block.TextContent) && !hasBorders && !hasBackground)
                 continue;
 
-            var style = block.ComputedStyle;
+
             float fontSize = config.DefaultFontSize;
             bool bold = false;
             bool italic = false;
@@ -302,7 +310,6 @@ public sealed class PdfWriter
             }
 
             // Draw borders if any
-            bool hasBorders = block.BorderTop > 0 || block.BorderBottom > 0 || block.BorderLeft > 0 || block.BorderRight > 0;
             if (hasBorders)
             {
                 float br = 0, bg = 0, bb = 0;

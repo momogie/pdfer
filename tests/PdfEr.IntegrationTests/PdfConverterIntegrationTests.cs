@@ -669,6 +669,22 @@ public sealed class PdfConverterIntegrationTests : IDisposable
         Assert.Contains("rg", text);
     }
 
+    [Fact]
+    public void ConvertHtmlToPdf_Hr_RendersBorder()
+    {
+        var converter = _services.GetRequiredService<IPdfConverter>();
+        var html = """
+            <html><body><p>Above</p><hr/><p>Below</p></body></html>
+            """;
+
+        var pdf = converter.ConvertHtmlToPdf(html);
+        var text = System.Text.Encoding.ASCII.GetString(pdf);
+
+        Assert.Contains("Above", text);
+        Assert.Contains("Below", text);
+        Assert.Contains("re S", text);
+    }
+
     public void Dispose()
     {
         if (!_disposed)

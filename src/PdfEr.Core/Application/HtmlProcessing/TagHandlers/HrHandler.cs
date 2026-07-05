@@ -10,7 +10,7 @@ public sealed class HrHandler : ITagHandler
     public void Open(TagContext context)
     {
         var box = context.LayoutEngine.CreateBlock("hr", context.Attributes, context.ParentStyle);
-        box.Height = 2f;
+        box.Height = box.BorderTop + box.BorderBottom;
         box.TextContent = "";
         context.CurrentBlock = box;
     }

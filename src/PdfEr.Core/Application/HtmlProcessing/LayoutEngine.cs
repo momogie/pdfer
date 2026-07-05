@@ -82,13 +82,14 @@ public sealed class LayoutEngine
 
         if (box.TagName is "h1" or "h2" or "h3" or "h4" or "h5" or "h6" or "p" or "div"
             or "li" or "ul" or "ol" or "blockquote" or "pre" or "section" or "article"
-            or "header" or "footer" or "nav" or "main" or "td" or "th")
+            or "header" or "footer" or "nav" or "main" or "td" or "th" or "hr")
         {
             _currentY += box.MarginTop;
             box.Y = _currentY;
 
             var fontSize = GetFontSize(box.ComputedStyle);
-            box.Height = fontSize * 1.3f + box.PaddingTop + box.PaddingBottom;
+            if (box.Height <= 0)
+                box.Height = fontSize * 1.3f + box.PaddingTop + box.PaddingBottom;
 
             if (!string.IsNullOrWhiteSpace(box.TextContent))
             {
