@@ -16,6 +16,7 @@ public sealed class LayoutEngine
     private PageLayout _currentPage = null!;
     private float _currentY;
     public float CurrentY => _currentY;
+    public PageLayout CurrentPage => _currentPage;
     private BlockBox? _currentBlockContainer;
 
     public LayoutEngine(CssMerger cssMerger, CssNormalizer cssNormalizer, IUnitConverter unitConverter)
@@ -47,6 +48,11 @@ public sealed class LayoutEngine
         _currentY += amount;
     }
 
+    public void BreakPage(PdfConverterConfiguration config)
+    {
+        AddNewPage(config);
+    }
+
     private void AddNewPage(PdfConverterConfiguration config)
     {
         var size = PageSize.FromOrientation(
@@ -73,6 +79,14 @@ public sealed class LayoutEngine
 
         ApplyBoxModel(box, styles);
 
+        var cssWidth = styles.GetPropertyValue("width");
+        if (!string.IsNullOrWhiteSpace(cssWidth) && cssWidth != "auto")
+        {
+            var parsed = ParseCssLength(cssWidth, _currentPage.ContentBox.Width);
+            if (parsed > 0)
+                box.Width = parsed;
+        }
+
         return box;
     }
 
@@ -82,7 +96,7 @@ public sealed class LayoutEngine
 
         if (box.TagName is "h1" or "h2" or "h3" or "h4" or "h5" or "h6" or "p" or "div"
             or "li" or "ul" or "ol" or "blockquote" or "pre" or "section" or "article"
-            or "header" or "footer" or "nav" or "main" or "td" or "th" or "hr")
+            or "header" or "footer" or "nav" or "main" or "td" or "th" or "hr" or "img")
         {
             _currentY += box.MarginTop;
             box.Y = _currentY;
@@ -90,6 +104,14 @@ public sealed class LayoutEngine
             var fontSize = GetFontSize(box.ComputedStyle);
             if (box.Height <= 0)
                 box.Height = fontSize * 1.3f + box.PaddingTop + box.PaddingBottom;
+
+            var cssHeight = box.ComputedStyle?.GetPropertyValue("height");
+            if (!string.IsNullOrWhiteSpace(cssHeight) && cssHeight != "auto")
+            {
+                var parsed = ParseCssLength(cssHeight, _currentPage.ContentBox.Height);
+                if (parsed > 0)
+                    box.Height = parsed;
+            }
 
             if (!string.IsNullOrWhiteSpace(box.TextContent))
             {
@@ -172,6 +194,22 @@ public sealed class LayoutEngine
         if (float.TryParse(value, out var num)) return num;
 
         return 0;
+    }
+
+    private static float ParseCssLength(string? value, float parentDimension)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return 0;
+        value = value.Trim().ToLowerInvariant();
+        if (value == "auto") return 0;
+
+        if (value.EndsWith("%"))
+        {
+            if (float.TryParse(value[..^1].Trim(), out var pct))
+                return parentDimension * pct / 100f;
+            return 0;
+        }
+
+        return ParseLength(value);
     }
 
     private static float GetFontSize(CssDeclarationBlock? style)

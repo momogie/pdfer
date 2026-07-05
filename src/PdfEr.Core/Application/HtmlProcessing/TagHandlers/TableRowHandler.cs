@@ -13,7 +13,13 @@ public sealed class TableRowHandler : ITagHandler
         var tableDef = context.TableDef?.Current;
         if (tableDef == null) return;
 
-        tableDef.Rows.Add(new TableRow());
+        var row = new TableRow();
+        if (context.TableDef != null)
+        {
+            row.IsHeader = context.TableDef.InHeader;
+            row.IsFooter = context.TableDef.InFooter;
+        }
+        tableDef.Rows.Add(row);
 
         var dummy = new BlockBox { TagName = "tr" };
         context.CurrentBlock = dummy;

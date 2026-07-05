@@ -9,11 +9,22 @@ public sealed class TableSectionHandler : ITagHandler
 
     public void Open(TagContext context)
     {
+        if (context.TableDef != null)
+        {
+            context.TableDef.InHeader = string.Equals(context.TagName, "thead", StringComparison.OrdinalIgnoreCase);
+            context.TableDef.InFooter = string.Equals(context.TagName, "tfoot", StringComparison.OrdinalIgnoreCase);
+        }
+
         var dummy = new BlockBox { TagName = context.TagName };
         context.CurrentBlock = dummy;
     }
 
     public void Close(TagContext context)
     {
+        if (context.TableDef != null)
+        {
+            context.TableDef.InHeader = false;
+            context.TableDef.InFooter = false;
+        }
     }
 }

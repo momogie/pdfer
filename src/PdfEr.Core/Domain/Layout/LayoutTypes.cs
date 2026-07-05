@@ -110,6 +110,10 @@ public sealed class InlineBox
     public CssDeclarationBlock? ComputedStyle { get; set; }
     public InlineBoxType Type { get; set; } = InlineBoxType.Text;
     public string? LinkUrl { get; set; }
+    public string? ImageSource { get; set; }
+    public byte[]? ImageData { get; set; }
+    public int ImagePixelWidth { get; set; }
+    public int ImagePixelHeight { get; set; }
 }
 
 public enum InlineBoxType

@@ -4,6 +4,7 @@ using PdfEr.Core.Application.Interfaces;
 using PdfEr.Core.Domain.Typography;
 using PdfEr.Infrastructure;
 using PdfEr.Core.Domain.Enums;
+using SixLabors.ImageSharp;
 
 namespace PdfEr.IntegrationTests;
 
@@ -683,6 +684,230 @@ public sealed class PdfConverterIntegrationTests : IDisposable
         Assert.Contains("Above", text);
         Assert.Contains("Below", text);
         Assert.Contains("re S", text);
+    }
+
+    [Fact]
+    public void ConvertHtmlToPdf_ImgWithLocalFile_ContainsDoOperator()
+    {
+        var imgPath = Path.Combine(Path.GetTempPath(), "PdfErTest_img_" + Guid.NewGuid().ToString("N") + ".png");
+        try
+        {
+            using (var img = new SixLabors.ImageSharp.Image<SixLabors.ImageSharp.PixelFormats.Rgba32>(20, 10))
+            {
+                img.SaveAsPng(imgPath);
+            }
+
+            var converter = _services.GetRequiredService<IPdfConverter>();
+            var html = $"""
+                <html><body><img src="{imgPath}" width="20" height="10"/></body></html>
+                """;
+
+            var pdf = converter.ConvertHtmlToPdf(html);
+            var text = System.Text.Encoding.ASCII.GetString(pdf);
+
+            Assert.Contains("Do", text);
+            Assert.Contains("/XObject", text);
+            Assert.Contains("/Type /XObject", text);
+            Assert.Contains("/Subtype /Image", text);
+            Assert.Contains("/Img", text);
+        }
+        finally
+        {
+            if (File.Exists(imgPath)) File.Delete(imgPath);
+        }
+    }
+
+    [Fact]
+    public void ConvertHtmlToPdf_ImgWithBasePath_ResolvesRelativePath()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "PdfErTest_imgbase_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        var imgPath = Path.Combine(tempDir, "photo.png");
+        try
+        {
+            using (var img = new SixLabors.ImageSharp.Image<SixLabors.ImageSharp.PixelFormats.Rgba32>(30, 30))
+            {
+                img.SaveAsPng(imgPath);
+            }
+
+            var config = _services.GetRequiredService<PdfEr.Core.Application.Interfaces.PdfConverterConfiguration>();
+            config.ImageBasePath = tempDir;
+
+            var converter = _services.GetRequiredService<IPdfConverter>();
+            var html = """
+                <html><body><img src="photo.png" width="30" height="30"/></body></html>
+                """;
+
+            var pdf = converter.ConvertHtmlToPdf(html);
+            var text = System.Text.Encoding.ASCII.GetString(pdf);
+
+            Assert.Contains("Do", text);
+            Assert.Contains("/Img", text);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public void ConvertHtmlToPdf_NestedTable_RendersAllCellText()
+    {
+        var converter = _services.GetRequiredService<IPdfConverter>();
+        var html = """
+            <html><body>
+            <table>
+            <tr><td>Outer A
+            <table><tr><td>Inner A1</td><td>Inner B1</td></tr></table>
+            </td><td>Outer B</td></tr>
+            </table>
+            </body></html>
+            """;
+
+        var pdf = converter.ConvertHtmlToPdf(html);
+        var text = System.Text.Encoding.ASCII.GetString(pdf);
+
+        Assert.True(PdfTextContains(text, "Inner A1"));
+        Assert.True(PdfTextContains(text, "Inner B1"));
+        Assert.True(PdfTextContains(text, "Outer A"));
+        Assert.True(PdfTextContains(text, "Outer B"));
+    }
+
+    [Fact]
+    public void ConvertHtmlToPdf_TextAlignCenter_ContainsTdOffset()
+    {
+        var converter = _services.GetRequiredService<IPdfConverter>();
+        var html = """
+            <html><body>
+            <p style="text-align:center">Centered text</p>
+            </body></html>
+            """;
+
+        var pdf = converter.ConvertHtmlToPdf(html);
+        var text = System.Text.Encoding.ASCII.GetString(pdf);
+
+        Assert.Contains("Centered text", text);
+    }
+
+    [Fact]
+    public void ConvertHtmlToPdf_TextDecorationUnderline_RendersUnderline()
+    {
+        var converter = _services.GetRequiredService<IPdfConverter>();
+        var html = """
+            <html><body>
+            <p style="text-decoration:underline">Underlined paragraph</p>
+            </body></html>
+            """;
+
+        var pdf = converter.ConvertHtmlToPdf(html);
+        var text = System.Text.Encoding.ASCII.GetString(pdf);
+
+        Assert.Contains("Underlined paragraph", text);
+        Assert.Contains("m", text);
+        Assert.Contains("l S", text);
+    }
+
+    [Fact]
+    public void ConvertHtmlToPdf_UAndInsTags_RendersUnderline()
+    {
+        var converter = _services.GetRequiredService<IPdfConverter>();
+        var html = """
+            <html><body>
+            <p>Normal <u>underlined</u> and <ins>inserted</ins> text.</p>
+            </body></html>
+            """;
+
+        var pdf = converter.ConvertHtmlToPdf(html);
+        var text = System.Text.Encoding.ASCII.GetString(pdf);
+
+        Assert.True(PdfTextContains(text, "Normal underlined and inserted text."));
+    }
+
+    [Fact]
+    public void ConvertHtmlToPdf_MultiPageTable_RepeatsHeader()
+    {
+        var converter = _services.GetRequiredService<IPdfConverter>();
+        var sb = new System.Text.StringBuilder();
+        sb.Append("<html><body><table><thead><tr><th>Hdr</th></tr></thead><tbody>");
+        for (int i = 0; i < 80; i++)
+            sb.Append("<tr><td>Row " + i + "</td></tr>");
+        sb.Append("</tbody></table></body></html>");
+        var html = sb.ToString();
+
+        var pdf = converter.ConvertHtmlToPdf(html);
+        var text = System.Text.Encoding.ASCII.GetString(pdf);
+
+        Assert.True(PdfTextContains(text, "Row 0"));
+        Assert.True(PdfTextContains(text, "Row 79"));
+        // Should have multiple pages
+        var pageCount = CountOccurrences(text, "/Type /Page");
+        Assert.True(pageCount >= 2, "Multi-page table should produce at least 2 pages");
+    }
+
+    [Fact]
+    public void ConvertHtmlToPdf_CssWidth_AppliesExplicitWidth()
+    {
+        var converter = _services.GetRequiredService<IPdfConverter>();
+        var html = """
+            <html><body>
+            <div style="width: 100mm; background:yellow">Fixed width div</div>
+            </body></html>
+            """;
+
+        var pdf = converter.ConvertHtmlToPdf(html);
+        var text = System.Text.Encoding.ASCII.GetString(pdf);
+
+        Assert.Contains("Fixed width div", text);
+    }
+
+    [Fact]
+    public void ConvertHtmlToPdf_CssHeight_AppliesExplicitHeight()
+    {
+        var converter = _services.GetRequiredService<IPdfConverter>();
+        var html = """
+            <html><body>
+            <div style="height: 50mm; width: 100mm; border:1px solid black">Tall div</div>
+            </body></html>
+            """;
+
+        var pdf = converter.ConvertHtmlToPdf(html);
+        var text = System.Text.Encoding.ASCII.GetString(pdf);
+
+        Assert.Contains("Tall div", text);
+    }
+
+    [Fact]
+    public void ConvertHtmlToPdf_NestedTableDeep_RendersAllLevels()
+    {
+        var converter = _services.GetRequiredService<IPdfConverter>();
+        var html = """
+            <html><body>
+            <table><tr><td>Level1
+            <table><tr><td>Level2
+            <table><tr><td>Level3</td></tr>
+            </table></td></tr>
+            </table></td></tr>
+            </table>
+            </body></html>
+            """;
+
+        var pdf = converter.ConvertHtmlToPdf(html);
+        var text = System.Text.Encoding.ASCII.GetString(pdf);
+
+        Assert.True(PdfTextContains(text, "Level1"));
+        Assert.True(PdfTextContains(text, "Level2"));
+        Assert.True(PdfTextContains(text, "Level3"));
+    }
+
+    private static int CountOccurrences(string text, string pattern)
+    {
+        int count = 0, idx = 0;
+        while ((idx = text.IndexOf(pattern, idx, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            idx += pattern.Length;
+        }
+        return count;
     }
 
     public void Dispose()

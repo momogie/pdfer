@@ -1088,3 +1088,639 @@ public class LayoutEngineStaticTests
         Assert.Equal(2f, box.BorderLeft, 2);
     }
 }
+
+public class CssParserTests
+{
+    [Fact]
+    public void ComputeSpecificity_ElementOnly_Returns001()
+    {
+        var result = CssParser.ComputeSpecificity("div");
+        Assert.Equal(0, result.IdCount);
+        Assert.Equal(0, result.ClassCount);
+        Assert.Equal(1, result.ElementCount);
+    }
+
+    [Fact]
+    public void ComputeSpecificity_ClassOnly_Returns010()
+    {
+        var result = CssParser.ComputeSpecificity(".myclass");
+        Assert.Equal(0, result.IdCount);
+        Assert.Equal(1, result.ClassCount);
+        Assert.Equal(0, result.ElementCount);
+    }
+
+    [Fact]
+    public void ComputeSpecificity_IdOnly_Returns100()
+    {
+        var result = CssParser.ComputeSpecificity("#myid");
+        Assert.Equal(1, result.IdCount);
+        Assert.Equal(0, result.ClassCount);
+        Assert.Equal(0, result.ElementCount);
+    }
+
+    [Fact]
+    public void ComputeSpecificity_ComplexSelector_Accumulates()
+    {
+        var result = CssParser.ComputeSpecificity("div.myclass#myid");
+        Assert.Equal(1, result.IdCount);
+        Assert.Equal(1, result.ClassCount);
+        Assert.Equal(1, result.ElementCount);
+    }
+
+    [Fact]
+    public void ComputeSpecificity_MultipleSelectors_TakesMax()
+    {
+        var result = CssParser.ComputeSpecificity("div, .myclass");
+        Assert.Equal(0, result.IdCount);
+        Assert.Equal(1, result.ClassCount);
+        Assert.Equal(1, result.ElementCount);
+    }
+
+    [Fact]
+    public void ComputeSpecificity_AttributeSelector_ClassCount()
+    {
+        var result = CssParser.ComputeSpecificity("[type=text]");
+        Assert.Equal(0, result.IdCount);
+        Assert.Equal(1, result.ClassCount);
+        Assert.Equal(0, result.ElementCount);
+    }
+
+    [Fact]
+    public void ComputeSpecificity_PseudoClass_ClassCount()
+    {
+        var result = CssParser.ComputeSpecificity("li:hover");
+        Assert.Equal(0, result.IdCount);
+        Assert.Equal(1, result.ClassCount);
+        Assert.Equal(1, result.ElementCount);
+    }
+
+    [Fact]
+    public void ComputeSpecificity_DescendantSelector()
+    {
+        var result = CssParser.ComputeSpecificity("div p");
+        Assert.Equal(0, result.IdCount);
+        Assert.Equal(0, result.ClassCount);
+        Assert.Equal(2, result.ElementCount);
+    }
+
+    [Fact]
+    public void ParseDeclarations_SingleProperty()
+    {
+        var result = CssParser.ParseDeclarations("color: red");
+        Assert.Equal("red", result.GetPropertyValue("color"));
+    }
+
+    [Fact]
+    public void ParseDeclarations_MultipleProperties()
+    {
+        var result = CssParser.ParseDeclarations("color: red; font-size: 12pt");
+        Assert.Equal("red", result.GetPropertyValue("color"));
+        Assert.Equal("12pt", result.GetPropertyValue("font-size"));
+    }
+
+    [Fact]
+    public void ParseDeclarations_WithImportant()
+    {
+        var result = CssParser.ParseDeclarations("color: red !important");
+        Assert.True(result.TryGetProperty("color", out var val));
+        Assert.True(val!.IsImportant);
+    }
+
+    [Fact]
+    public void ParseDeclarations_Empty_ReturnsEmpty()
+    {
+        var result = CssParser.ParseDeclarations("");
+        Assert.Equal(0, result.Count);
+    }
+
+    [Fact]
+    public void Parse_SingleRule()
+    {
+        var parser = new CssParser();
+        var sheet = parser.Parse("div { color: red }");
+        Assert.Single(sheet.Rules);
+        Assert.Equal("div", sheet.Rules[0].Selector);
+    }
+
+    [Fact]
+    public void Parse_MultipleRules()
+    {
+        var parser = new CssParser();
+        var sheet = parser.Parse("p { margin: 0 } h1 { font-size: 2em }");
+        Assert.Equal(2, sheet.Rules.Count);
+    }
+
+    [Fact]
+    public void Parse_FontFace_ExtractsRule()
+    {
+        var parser = new CssParser();
+        var sheet = parser.Parse("@font-face { font-family: MyFont; src: url(font.woff); }");
+        Assert.Single(sheet.FontFaceRules);
+        Assert.Equal("MyFont", sheet.FontFaceRules[0].FontFamily);
+    }
+
+    [Fact]
+    public void Parse_PageRule_ExtractsRule()
+    {
+        var parser = new CssParser();
+        var sheet = parser.Parse("@page { margin: 10mm; }");
+        Assert.Single(sheet.PageRules);
+    }
+
+    [Fact]
+    public void Parse_MediaRule_ExtractsRule()
+    {
+        var parser = new CssParser();
+        var sheet = parser.Parse("@media print { body { color: black; } }");
+        Assert.Single(sheet.MediaRules);
+        Assert.Equal("print", sheet.MediaRules[0].MediaQuery.Trim());
+        Assert.Single(sheet.MediaRules[0].Rules);
+    }
+
+    [Fact]
+    public void Parse_Null_ReturnsEmpty()
+    {
+        var parser = new CssParser();
+        var sheet = parser.Parse(null!);
+        Assert.Empty(sheet.Rules);
+    }
+
+    [Fact]
+    public void Parse_Whitespace_ReturnsEmpty()
+    {
+        var parser = new CssParser();
+        var sheet = parser.Parse("   ");
+        Assert.Empty(sheet.Rules);
+    }
+}
+
+public class CssMergerStaticTests
+{
+    [Fact]
+    public void MediaQueryMatchesPrint_Empty_ReturnsTrue()
+    {
+        Assert.True(CssMerger.MediaQueryMatchesPrint(""));
+    }
+
+    [Fact]
+    public void MediaQueryMatchesPrint_Print_ReturnsTrue()
+    {
+        Assert.True(CssMerger.MediaQueryMatchesPrint("print"));
+    }
+
+    [Fact]
+    public void MediaQueryMatchesPrint_All_ReturnsTrue()
+    {
+        Assert.True(CssMerger.MediaQueryMatchesPrint("all"));
+    }
+
+    [Fact]
+    public void MediaQueryMatchesPrint_OnlyPrint_ReturnsTrue()
+    {
+        Assert.True(CssMerger.MediaQueryMatchesPrint("only print"));
+    }
+
+    [Fact]
+    public void MediaQueryMatchesPrint_Screen_ReturnsFalse()
+    {
+        Assert.False(CssMerger.MediaQueryMatchesPrint("screen"));
+    }
+
+    [Fact]
+    public void MediaQueryMatchesPrint_NotScreen_ReturnsTrue()
+    {
+        Assert.True(CssMerger.MediaQueryMatchesPrint("not screen"));
+    }
+
+    [Fact]
+    public void MediaQueryMatchesPrint_NotPrint_ReturnsFalse()
+    {
+        Assert.False(CssMerger.MediaQueryMatchesPrint("not print"));
+    }
+
+    [Fact]
+    public void MediaQueryMatchesPrint_MultipleCommaSeparated_PrintWins()
+    {
+        Assert.True(CssMerger.MediaQueryMatchesPrint("screen, print"));
+    }
+}
+
+public class CssPropertyValueEdgeTests
+{
+    [Fact]
+    public void ToFloat_NegativeNumber_ReturnsNegative()
+    {
+        var val = new CssPropertyValue("-10px");
+        Assert.Equal(-10f, val.ToFloat());
+    }
+
+    [Fact]
+    public void ToFloat_DecimalNumber_ReturnsDecimal()
+    {
+        var val = new CssPropertyValue("3.14em");
+        Assert.Equal(3.14f, val.ToFloat(), 2);
+    }
+
+    [Fact]
+    public void ToFloat_NoNumber_ReturnsZero()
+    {
+        var val = new CssPropertyValue("inherit");
+        Assert.Equal(0f, val.ToFloat());
+    }
+
+    [Fact]
+    public void ToFloat_JustNumber_ReturnsNumber()
+    {
+        var val = new CssPropertyValue("42");
+        Assert.Equal(42f, val.ToFloat());
+    }
+}
+
+public sealed class HrHandlerTests
+{
+    [Fact]
+    public void Open_CreatesBlockWithTagNameHr()
+    {
+        var ctx = CreateTagContext("hr");
+        var handler = new HrHandler();
+        handler.Open(ctx);
+
+        Assert.NotNull(ctx.CurrentBlock);
+        Assert.Equal("hr", ctx.CurrentBlock.TagName);
+    }
+
+    [Fact]
+    public void Open_SetsEmptyTextContent()
+    {
+        var ctx = CreateTagContext("hr");
+        var handler = new HrHandler();
+        handler.Open(ctx);
+
+        Assert.NotNull(ctx.CurrentBlock);
+        Assert.Equal("", ctx.CurrentBlock.TextContent);
+    }
+
+    [Fact]
+    public void Open_SetsHeightToBorderTopPlusBorderBottom()
+    {
+        var ctx = CreateTagContext("hr");
+        var handler = new HrHandler();
+        handler.Open(ctx);
+
+        Assert.NotNull(ctx.CurrentBlock);
+        var expected = ctx.CurrentBlock.BorderTop + ctx.CurrentBlock.BorderBottom;
+        Assert.Equal(expected, ctx.CurrentBlock.Height, 4);
+    }
+
+    [Fact]
+    public void Close_DoesNotThrow()
+    {
+        var ctx = CreateTagContext("hr");
+        var handler = new HrHandler();
+        handler.Open(ctx);
+        handler.Close(ctx);
+    }
+
+    private static TagContext CreateTagContext(string tagName, CssDeclarationBlock? overrideStyle = null)
+    {
+        var parser = new CssParser();
+        var merger = new CssMerger(parser);
+        var normalizer = new CssNormalizer();
+        var converter = NSubstitute.Substitute.For<IUnitConverter>();
+        var engine = new LayoutEngine(merger, normalizer, converter);
+        var config = new PdfConverterConfiguration { Title = "Test" };
+        var doc = engine.CreateDocumentLayout(config);
+        var page = doc.Pages[0];
+
+        var style = overrideStyle ?? merger.ResolveStyles(tagName, new Dictionary<string, string>(), null);
+        style = normalizer.ExpandShorthands(style);
+
+        return new TagContext(
+            null!, tagName, new Dictionary<string, string>(),
+            style, null, engine, config, page,
+            NSubstitute.Substitute.For<IFontRegistry>(),
+            new Stack<ListState>());
+    }
+}
+
+public sealed class BlockTagHandlerTests
+{
+    private sealed class TestBlockHandler : BlockTagHandler
+    {
+        public override string[] HandledTags => new[] { "test" };
+    }
+
+    [Fact]
+    public void Open_CreatesBlockWithTagName()
+    {
+        var ctx = CreateHandlerContext("div");
+        var handler = new TestBlockHandler();
+        handler.Open(ctx);
+
+        Assert.NotNull(ctx.CurrentBlock);
+        Assert.Equal("div", ctx.CurrentBlock.TagName);
+    }
+
+    [Fact]
+    public void Open_SetsCurrentBlock()
+    {
+        var ctx = CreateHandlerContext("p");
+        var handler = new TestBlockHandler();
+        handler.Open(ctx);
+
+        Assert.NotNull(ctx.CurrentBlock);
+        Assert.Equal("p", ctx.CurrentBlock.TagName);
+    }
+
+    [Fact]
+    public void Close_DoesNotThrow()
+    {
+        var ctx = CreateHandlerContext("div");
+        var handler = new TestBlockHandler();
+        handler.Open(ctx);
+        handler.Close(ctx);
+    }
+
+    private static TagContext CreateHandlerContext(string tagName)
+    {
+        var parser = new CssParser();
+        var merger = new CssMerger(parser);
+        var normalizer = new CssNormalizer();
+        var converter = NSubstitute.Substitute.For<IUnitConverter>();
+        var engine = new LayoutEngine(merger, normalizer, converter);
+        var config = new PdfConverterConfiguration { Title = "Test" };
+        var doc = engine.CreateDocumentLayout(config);
+        var page = doc.Pages[0];
+
+        var style = merger.ResolveStyles(tagName, new Dictionary<string, string>(), null);
+        style = normalizer.ExpandShorthands(style);
+
+        return new TagContext(
+            null!, tagName, new Dictionary<string, string>(),
+            style, null, engine, config, page,
+            NSubstitute.Substitute.For<IFontRegistry>(),
+            new Stack<ListState>());
+    }
+}
+
+public sealed class InlineTagHandlerTests
+{
+    private sealed class TestInlineHandler : InlineTagHandler
+    {
+        public override string[] HandledTags => new[] { "span" };
+    }
+
+    [Fact]
+    public void Open_DoesNothing()
+    {
+        var handler = new TestInlineHandler();
+        var ctx = CreateInlineContext("span");
+        handler.Open(ctx);
+        Assert.Null(ctx.CurrentBlock);
+    }
+
+    [Fact]
+    public void Close_DoesNotThrow()
+    {
+        var handler = new TestInlineHandler();
+        var ctx = CreateInlineContext("span");
+        handler.Close(ctx);
+    }
+
+    private static TagContext CreateInlineContext(string tagName)
+    {
+        var parser = new CssParser();
+        var merger = new CssMerger(parser);
+        var normalizer = new CssNormalizer();
+        var converter = NSubstitute.Substitute.For<IUnitConverter>();
+        var engine = new LayoutEngine(merger, normalizer, converter);
+        var config = new PdfConverterConfiguration { Title = "Test" };
+        var doc = engine.CreateDocumentLayout(config);
+        var page = doc.Pages[0];
+
+        var style = merger.ResolveStyles(tagName, new Dictionary<string, string>(), null);
+        style = normalizer.ExpandShorthands(style);
+
+        return new TagContext(
+            null!, tagName, new Dictionary<string, string>(),
+            style, null, engine, config, page,
+            NSubstitute.Substitute.For<IFontRegistry>(),
+            new Stack<ListState>());
+    }
+}
+
+public class CssWidthHeightTests
+{
+    [Fact]
+    public void CreateBlock_WithCssWidthMm_SetsBoxWidth()
+    {
+        var parser = new CssParser();
+        var merger = new CssMerger(parser);
+        var normalizer = new CssNormalizer();
+        var converter = NSubstitute.Substitute.For<IUnitConverter>();
+        var engine = new LayoutEngine(merger, normalizer, converter);
+        var config = new PdfConverterConfiguration { Title = "Test" };
+        var doc = engine.CreateDocumentLayout(config);
+
+        var attrs = new Dictionary<string, string> { { "style", "width: 50mm" } };
+        var box = engine.CreateBlock("div", attrs);
+
+        Assert.Equal(50f, box.Width, 1);
+    }
+
+    [Fact]
+    public void CreateBlock_WithCssWidthPercent_ScalesToParent()
+    {
+        var parser = new CssParser();
+        var merger = new CssMerger(parser);
+        var normalizer = new CssNormalizer();
+        var converter = NSubstitute.Substitute.For<IUnitConverter>();
+        var engine = new LayoutEngine(merger, normalizer, converter);
+        var config = new PdfConverterConfiguration { Title = "Test" };
+        var doc = engine.CreateDocumentLayout(config);
+
+        var attrs = new Dictionary<string, string> { { "style", "width: 50%" } };
+        var box = engine.CreateBlock("div", attrs);
+
+        var expectedHalf = doc.Pages[0].ContentBox.Width * 0.5f;
+        Assert.Equal(expectedHalf, box.Width, 1);
+    }
+
+    [Fact]
+    public void LayoutBlock_WithCssHeightMm_SetsBoxHeight()
+    {
+        var parser = new CssParser();
+        var merger = new CssMerger(parser);
+        var normalizer = new CssNormalizer();
+        var converter = NSubstitute.Substitute.For<IUnitConverter>();
+        var engine = new LayoutEngine(merger, normalizer, converter);
+        var config = new PdfConverterConfiguration { Title = "Test" };
+        var doc = engine.CreateDocumentLayout(config);
+        var page = doc.Pages[0];
+
+        var attrs = new Dictionary<string, string> { { "style", "height: 30mm; width: 100mm" } };
+        var box = engine.CreateBlock("div", attrs);
+        engine.LayoutBlock(box, config);
+
+        Assert.Equal(30f, box.Height, 1);
+    }
+
+    [Fact]
+    public void CreateBlock_WithoutCssWidth_UsesContentBoxWidth()
+    {
+        var parser = new CssParser();
+        var merger = new CssMerger(parser);
+        var normalizer = new CssNormalizer();
+        var converter = NSubstitute.Substitute.For<IUnitConverter>();
+        var engine = new LayoutEngine(merger, normalizer, converter);
+        var config = new PdfConverterConfiguration { Title = "Test" };
+        var doc = engine.CreateDocumentLayout(config);
+
+        var box = engine.CreateBlock("div", new Dictionary<string, string>());
+
+        Assert.Equal(doc.Pages[0].ContentBox.Width, box.Width, 1);
+    }
+
+    [Fact]
+    public void CreateBlock_WithCssWidthAuto_IgnoresAndUsesDefault()
+    {
+        var parser = new CssParser();
+        var merger = new CssMerger(parser);
+        var normalizer = new CssNormalizer();
+        var converter = NSubstitute.Substitute.For<IUnitConverter>();
+        var engine = new LayoutEngine(merger, normalizer, converter);
+        var config = new PdfConverterConfiguration { Title = "Test" };
+        var doc = engine.CreateDocumentLayout(config);
+
+        var attrs = new Dictionary<string, string> { { "style", "width: auto" } };
+        var box = engine.CreateBlock("div", attrs);
+
+        Assert.Equal(doc.Pages[0].ContentBox.Width, box.Width, 1);
+    }
+
+    [Fact]
+    public void LayoutBlock_WithoutCssHeight_AutoCalculates()
+    {
+        var parser = new CssParser();
+        var merger = new CssMerger(parser);
+        var normalizer = new CssNormalizer();
+        var converter = NSubstitute.Substitute.For<IUnitConverter>();
+        var engine = new LayoutEngine(merger, normalizer, converter);
+        var config = new PdfConverterConfiguration { Title = "Test" };
+        var doc = engine.CreateDocumentLayout(config);
+
+        var box = engine.CreateBlock("p", new Dictionary<string, string>());
+        box.TextContent = "Hello";
+        engine.LayoutBlock(box, config);
+
+        // Should have auto-calculated height based on font size
+        Assert.True(box.Height > 0);
+    }
+}
+
+public sealed class ListHandlerTests
+{
+    [Fact]
+    public void Open_Ordered_PushesListStateWithDecimalMarker()
+    {
+        var ctx = CreateListContext("ol");
+        var handler = new ListHandler();
+        handler.Open(ctx);
+
+        Assert.Single(ctx.ListStack);
+        Assert.True(ctx.ListStack.Peek().IsOrdered);
+        Assert.Equal(1, ctx.ListStack.Peek().Start);
+        Assert.Equal("decimal", ctx.ListStack.Peek().ListStyleType);
+    }
+
+    [Fact]
+    public void Open_Unordered_PushesListStateWithDiscMarker()
+    {
+        var ctx = CreateListContext("ul");
+        var handler = new ListHandler();
+        handler.Open(ctx);
+
+        Assert.Single(ctx.ListStack);
+        Assert.False(ctx.ListStack.Peek().IsOrdered);
+        Assert.Equal("disc", ctx.ListStack.Peek().ListStyleType);
+    }
+
+    [Fact]
+    public void Open_WithStartAttribute_UsesCustomStart()
+    {
+        var ctx = CreateListContext("ol", new Dictionary<string, string> { { "start", "5" } });
+        var handler = new ListHandler();
+        handler.Open(ctx);
+
+        Assert.Equal(5, ctx.ListStack.Peek().Start);
+        Assert.Equal(5, ctx.ListStack.Peek().Counter);
+    }
+
+    [Fact]
+    public void Open_WithCustomListStyle_UsesProvidedStyle()
+    {
+        var ctx = CreateListContext("ul");
+        ctx.ComputedStyle.SetProperty("list-style-type", "square");
+        var handler = new ListHandler();
+        handler.Open(ctx);
+
+        Assert.Equal("square", ctx.ListStack.Peek().ListStyleType);
+    }
+
+    [Fact]
+    public void Open_SetsCurrentBlockWithTagName()
+    {
+        var ctx = CreateListContext("ol");
+        var handler = new ListHandler();
+        handler.Open(ctx);
+
+        Assert.NotNull(ctx.CurrentBlock);
+        Assert.Equal("ol", ctx.CurrentBlock.TagName);
+    }
+
+    [Fact]
+    public void Close_PopsListState()
+    {
+        var ctx = CreateListContext("ul");
+        var handler = new ListHandler();
+        handler.Open(ctx);
+        Assert.Single(ctx.ListStack);
+
+        handler.Close(ctx);
+        Assert.Empty(ctx.ListStack);
+    }
+
+    [Fact]
+    public void Close_AddsBlockToPage()
+    {
+        var ctx = CreateListContext("ul");
+        var handler = new ListHandler();
+        handler.Open(ctx);
+
+        Assert.Empty(ctx.CurrentPage.Blocks);
+        handler.Close(ctx);
+        Assert.Single(ctx.CurrentPage.Blocks);
+    }
+
+    private static TagContext CreateListContext(string tagName, Dictionary<string, string>? attrs = null)
+    {
+        var parser = new CssParser();
+        var merger = new CssMerger(parser);
+        var normalizer = new CssNormalizer();
+        var converter = NSubstitute.Substitute.For<IUnitConverter>();
+        var engine = new LayoutEngine(merger, normalizer, converter);
+        var config = new PdfConverterConfiguration { Title = "Test" };
+        var doc = engine.CreateDocumentLayout(config);
+        var page = doc.Pages[0];
+
+        var attributes = attrs ?? new Dictionary<string, string>();
+        var style = merger.ResolveStyles(tagName, attributes, null);
+        style = normalizer.ExpandShorthands(style);
+
+        return new TagContext(
+            null!, tagName, attributes,
+            style, null, engine, config, page,
+            NSubstitute.Substitute.For<IFontRegistry>(),
+            new Stack<ListState>());
+    }
+}

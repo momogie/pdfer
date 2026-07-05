@@ -35,50 +35,100 @@ public sealed class TableHandler : ITagHandler
         var engine = new TableLayoutEngine();
         var layout = engine.ComputeLayout(tableDef, context.CurrentPage.ContentBox.Width);
 
+        // Find header row indices for multi-page support
+        var headerRowIndices = new List<int>();
+        for (int i = 0; i < tableDef.Rows.Count; i++)
+        {
+            if (tableDef.Rows[i].IsHeader)
+                headerRowIndices.Add(i);
+        }
+
         float contentX = context.CurrentPage.ContentBox.X;
-        float startY = context.LayoutEngine.CurrentY;
+        float currentY = context.LayoutEngine.CurrentY;
+        float pageBottom = context.CurrentPage.ContentBox.Bottom;
 
         foreach (var rowLayout in layout.Rows)
         {
+            float rowHeight = rowLayout.Height;
+
+            // Check if row fits on current page; if not, start new page
+            bool isHeaderRow = headerRowIndices.Contains(rowLayout.RowIndex);
+            if (!isHeaderRow && currentY + rowHeight > pageBottom)
+            {
+                context.LayoutEngine.AdvanceY(pageBottom - currentY);
+                context.LayoutEngine.BreakPage(context.Config);
+                context.CurrentPage = context.LayoutEngine.CurrentPage;
+
+                // Re-fetch page info after page break
+                contentX = context.CurrentPage.ContentBox.X;
+                currentY = context.LayoutEngine.CurrentY;
+
+                // Repeat header rows on new page
+                foreach (var hdrIdx in headerRowIndices)
+                {
+                    if (hdrIdx >= layout.Rows.Count) continue;
+                    var hdrLayout = layout.Rows[hdrIdx];
+                    foreach (var cellLayout in hdrLayout.Cells)
+                    {
+                        if (string.IsNullOrWhiteSpace(cellLayout.TextContent))
+                            continue;
+
+                        var cellBox = CreateCellBox(contentX, currentY, cellLayout);
+                        context.CurrentPage.Blocks.Add(cellBox);
+                    }
+                    currentY += hdrLayout.Height;
+                }
+            }
+
+            // Add cell blocks for this row
             foreach (var cellLayout in rowLayout.Cells)
             {
                 if (string.IsNullOrWhiteSpace(cellLayout.TextContent))
                     continue;
 
-                var cellBox = new BlockBox
-                {
-                    TagName = "td",
-                    TextContent = cellLayout.TextContent,
-                    X = contentX + cellLayout.X,
-                    Y = startY + cellLayout.Y,
-                    Width = cellLayout.Width,
-                    Height = cellLayout.Height,
-                    ComputedStyle = cellLayout.Style,
-                };
-
-                if (cellLayout.Style != null)
-                    LayoutEngine.ApplyBoxModel(cellBox, cellLayout.Style);
-
-                cellBox.InlineContent.Add(new InlineBox
-                {
-                    Text = cellLayout.TextContent,
-                    Type = InlineBoxType.Text,
-                    X = cellBox.X + cellBox.PaddingLeft,
-                    Y = cellBox.Y + cellBox.PaddingTop,
-                    Width = cellLayout.Width,
-                    Height = cellLayout.Height,
-                    ComputedStyle = cellBox.ComputedStyle,
-                });
-
+                var cellBox = CreateCellBox(contentX, currentY, cellLayout);
                 context.CurrentPage.Blocks.Add(cellBox);
             }
+
+            currentY += rowHeight;
         }
 
-        float totalHeight = layout.TotalHeight > 0 ? layout.TotalHeight : 20f;
-        context.LayoutEngine.AdvanceY(totalHeight);
+        float totalHeight = currentY - context.LayoutEngine.CurrentY;
+        if (totalHeight > 0)
+            context.LayoutEngine.AdvanceY(totalHeight);
 
         if (context.TableDef != null) context.TableDef.Current = null;
         context.CurrentBlock = null;
+    }
+
+    private static BlockBox CreateCellBox(float contentX, float baseY, TableCellLayout cellLayout)
+    {
+        var cellBox = new BlockBox
+        {
+            TagName = "td",
+            TextContent = cellLayout.TextContent,
+            X = contentX + cellLayout.X,
+            Y = baseY + cellLayout.Y,
+            Width = cellLayout.Width,
+            Height = cellLayout.Height,
+            ComputedStyle = cellLayout.Style,
+        };
+
+        if (cellLayout.Style != null)
+            LayoutEngine.ApplyBoxModel(cellBox, cellLayout.Style);
+
+        cellBox.InlineContent.Add(new InlineBox
+        {
+            Text = cellLayout.TextContent,
+            Type = InlineBoxType.Text,
+            X = cellBox.X + cellBox.PaddingLeft,
+            Y = cellBox.Y + cellBox.PaddingTop,
+            Width = cellLayout.Width,
+            Height = cellLayout.Height,
+            ComputedStyle = cellBox.ComputedStyle,
+        });
+
+        return cellBox;
     }
 
     private static float GetFontSize(CssDeclarationBlock? style, float defaultSize)

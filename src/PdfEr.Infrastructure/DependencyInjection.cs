@@ -6,6 +6,7 @@ using PdfEr.Core.Application.HtmlProcessing.TagHandlers;
 using PdfEr.Core.Application.Interfaces;
 using PdfEr.Infrastructure.Caching;
 using PdfEr.Infrastructure.PdfWriters;
+using PdfEr.Infrastructure.Services;
 using PdfEr.Infrastructure.Typography;
 using PdfEr.Infrastructure.Utilities;
 
@@ -35,6 +36,7 @@ public static class DependencyInjection
             return registry;
         });
         services.AddSingleton<ITextLayoutEngine, TextLayoutEngine>();
+        services.AddSingleton<IImageService, ImageService>();
         services.AddSingleton<CssParser>();
         services.AddSingleton<CssMerger>();
         services.AddSingleton<CssNormalizer>();
@@ -50,6 +52,7 @@ public static class DependencyInjection
         services.AddSingleton<ITagHandler, BlockquoteHandler>();
         services.AddSingleton<ITagHandler, PreHandler>();
         services.AddSingleton<ITagHandler, HrHandler>();
+        services.AddSingleton<ITagHandler, ImgHandler>();
         services.AddSingleton<ITagHandler, BreakHandler>();
         services.AddSingleton<ITagHandler, BoldHandler>();
         services.AddSingleton<ITagHandler, ItalicHandler>();

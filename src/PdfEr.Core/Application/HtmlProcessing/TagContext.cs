@@ -52,6 +52,8 @@ public sealed class TagContext
 public sealed class TableDefHolder
 {
     public TableDefinition? Current { get; set; }
+    public bool InHeader { get; set; }
+    public bool InFooter { get; set; }
 }
 
 public sealed class ListState

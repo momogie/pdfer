@@ -28,6 +28,13 @@ public sealed class PdfBuffer
         _totalLength += bytes.Length;
     }
 
+    public void Append(byte[] data)
+    {
+        if (data == null || data.Length == 0) return;
+        _chunks.Add(data);
+        _totalLength += data.Length;
+    }
+
     public void AppendLine(string text = "")
     {
         Append(text);
@@ -160,13 +167,16 @@ public sealed class PdfWriter
 
         var contentNums = new List<int>();
         var pageFontIndices = new List<List<int>>();
+        var pageImageRefs = new List<List<(string Name, int ObjNum)>>();
 
         foreach (var page in layout.Pages)
         {
             var usedFonts = new List<int>();
-            var contentNum = WriteBlockContentStream(page, config, usedFonts);
+            var images = new List<(string Name, int ObjNum)>();
+            var contentNum = WriteBlockContentStream(page, config, usedFonts, images);
             contentNums.Add(contentNum);
             pageFontIndices.Add(usedFonts);
+            pageImageRefs.Add(images);
         }
 
         WriteAllFontObjects();
@@ -204,7 +214,8 @@ public sealed class PdfWriter
             _buffer.AppendLine($"   /Contents {contentNums[i]} 0 R");
 
             var fontResources = BuildFontResourcesDict(pageFontIndices[i]);
-            _buffer.AppendLine($"   /Resources << /Font << {fontResources} >> >>");
+            var xObjectResources = BuildXObjectDict(pageImageRefs[i]);
+            _buffer.AppendLine($"   /Resources << /Font << {fontResources} >> {xObjectResources}>>");
             _buffer.AppendLine(">>");
             _buffer.AppendLine("endobj");
 
@@ -240,7 +251,19 @@ public sealed class PdfWriter
         return string.Join(" ", parts);
     }
 
-    private int WriteBlockContentStream(PageLayout page, PdfConverterConfiguration config, List<int> usedFonts)
+    private static string BuildXObjectDict(List<(string Name, int ObjNum)> images)
+    {
+        if (images.Count == 0)
+            return "";
+
+        var parts = new List<string>();
+        foreach (var (name, objNum) in images)
+            parts.Add($"{name} {objNum} 0 R");
+
+        return $"/XObject << {string.Join(" ", parts)} >> ";
+    }
+
+    private int WriteBlockContentStream(PageLayout page, PdfConverterConfiguration config, List<int> usedFonts, List<(string Name, int ObjNum)> pageImages)
     {
         RecordObjectOffset();
         var num = AllocateObjectNumber();
@@ -350,26 +373,180 @@ public sealed class PdfWriter
                 }
             }
 
-            sb.Append("BT\n");
-            sb.AppendLine($"{_fontEntries[fontIdx].FontKey} {fontSizePt:F2} Tf");
-            sb.AppendLine($"{blockXPt:F2} {blockYPt:F2} Td");
+            // Emit image operators before text block (outside BT/ET)
+            if (block.InlineContent.Count > 0)
+            {
+                foreach (var inline in block.InlineContent)
+                {
+                    if (inline.Type == InlineBoxType.Image && inline.ImageData != null)
+                    {
+                        var imgObjNum = WriteImage(
+                            inline.ImageSource ?? $"img{_imageObjects.Count}",
+                            inline.ImageData,
+                            inline.ImagePixelWidth,
+                            inline.ImagePixelHeight);
 
+                        float imgLeftPt = inline.X * MmToPt + marginLeftPt;
+                        float imgBottomPt = pageH - ((inline.Y + inline.Height) * MmToPt) - marginTopPt;
+                        float imgWidthPt = inline.Width * MmToPt;
+                        float imgHeightPt = inline.Height * MmToPt;
+
+                        var imgName = $"/Img{imgObjNum}";
+                        if (!pageImages.Any(p => p.Name == imgName))
+                            pageImages.Add((imgName, imgObjNum));
+
+                        sb.AppendLine("q");
+                        sb.AppendLine($"{imgWidthPt:F2} 0 0 {imgHeightPt:F2} {imgLeftPt:F2} {imgBottomPt:F2} cm");
+                        sb.AppendLine($"{imgName} Do");
+                        sb.AppendLine("Q");
+                    }
+                }
+            }
+
+            // Text alignment
+            string? textAlign = null;
+            if (style != null)
+                textAlign = style.GetPropertyValue("text-align");
+
+            float textOffsetX = 0;
+            float extraWordSpacing = 0;
+            int wordCount = 0;
+            if (textAlign is "center" or "right" or "justify")
+            {
+                float textWidthPt = 0;
+                if (block.InlineContent.Count > 0)
+                {
+                    foreach (var inline in block.InlineContent)
+                    {
+                        if (inline.Type == InlineBoxType.Text && inline.Text != null)
+                        {
+                            textWidthPt += inline.Text.Length * fontSizePt * 0.5f;
+                            wordCount += inline.Text.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
+                        }
+                    }
+                }
+                else if (!string.IsNullOrEmpty(block.TextContent))
+                {
+                    textWidthPt = block.TextContent.Length * fontSizePt * 0.5f;
+                    wordCount = block.TextContent.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
+                }
+
+                float contentWidthPt = block.ContentWidth * MmToPt;
+
+                if (textAlign == "center")
+                    textOffsetX = Math.Max(0, (contentWidthPt - textWidthPt) / 2);
+                else if (textAlign == "right")
+                    textOffsetX = Math.Max(0, contentWidthPt - textWidthPt);
+                else if (textAlign == "justify" && wordCount > 1)
+                {
+                    float extraSpace = contentWidthPt - textWidthPt;
+                    if (extraSpace > 0)
+                        extraWordSpacing = extraSpace / (wordCount - 1);
+                }
+            }
+
+            // Emit text block (BT/ET) only if there is text content
+            bool hasText = false;
             if (block.InlineContent.Count > 0)
             {
                 foreach (var inline in block.InlineContent)
                 {
                     if (inline.Type == InlineBoxType.Text && inline.Text != null)
                     {
-                        sb.AppendLine($"{FormatPdfText(inline.Text)} Tj");
+                        hasText = true;
+                        break;
                     }
                 }
             }
-            else if (!string.IsNullOrEmpty(block.TextContent))
+            if (!hasText && !string.IsNullOrEmpty(block.TextContent))
+                hasText = true;
+
+            if (hasText)
             {
-                sb.AppendLine($"{FormatPdfText(block.TextContent)} Tj");
+                sb.Append("BT\n");
+                sb.AppendLine($"{_fontEntries[fontIdx].FontKey} {fontSizePt:F2} Tf");
+
+                if (extraWordSpacing > 0)
+                    sb.AppendLine($"{extraWordSpacing:F2} Tw");
+
+                sb.AppendLine($"{blockXPt + textOffsetX:F2} {blockYPt:F2} Td");
+
+                if (block.InlineContent.Count > 0)
+                {
+                    foreach (var inline in block.InlineContent)
+                    {
+                        if (inline.Type == InlineBoxType.Text && inline.Text != null)
+                        {
+                            sb.AppendLine($"{FormatPdfText(inline.Text)} Tj");
+                        }
+                    }
+                }
+                else if (!string.IsNullOrEmpty(block.TextContent))
+                {
+                    sb.AppendLine($"{FormatPdfText(block.TextContent)} Tj");
+                }
+
+                sb.Append("ET\n");
+
+                if (extraWordSpacing > 0)
+                    sb.AppendLine("0 Tw");
             }
 
-            sb.Append("ET\n");
+            // Text decoration (underline, line-through, overline)
+            if (block.InlineContent.Count > 0)
+            {
+                foreach (var inline in block.InlineContent)
+                {
+                    if (inline.Type != InlineBoxType.Text || inline.Text == null)
+                        continue;
+
+                    var inlineStyle = inline.ComputedStyle ?? block.ComputedStyle;
+                    string? decoration = null;
+                    if (inlineStyle != null)
+                        decoration = inlineStyle.GetPropertyValue("text-decoration-line");
+
+                    if (string.IsNullOrWhiteSpace(decoration) || decoration == "none")
+                        continue;
+
+                    float inlineXPt = inline.X * MmToPt + marginLeftPt;
+                    float inlineYPt = pageH - (inline.Y * MmToPt) - marginTopPt;
+                    float inlineWidthPt = inline.Text.Length * fontSizePt * 0.5f;
+
+                    // Stroke color from text color
+                    string? decoColorStr = null;
+                    if (inlineStyle != null)
+                        decoColorStr = inlineStyle.GetPropertyValue("color");
+                    if (!string.IsNullOrWhiteSpace(decoColorStr) && decoColorStr != "transparent" && decoColorStr != "rgba(0, 0, 0, 0)")
+                    {
+                        if (colorParser.TryParse(decoColorStr, out var dc) && dc is RgbColor decoRgb && decoRgb.A > 0)
+                            sb.AppendLine($"{decoRgb.R / 255f:F2} {decoRgb.G / 255f:F2} {decoRgb.B / 255f:F2} RG");
+                        else
+                            sb.AppendLine("0 0 0 RG");
+                    }
+                    else
+                    {
+                        sb.AppendLine("0 0 0 RG");
+                    }
+
+                    sb.AppendLine($"{Math.Max(0.4f, fontSizePt * 0.05f):F2} w");
+
+                    if (decoration.Contains("underline"))
+                    {
+                        float uy = inlineYPt - fontSizePt * 0.05f;
+                        sb.AppendLine($"{inlineXPt:F2} {uy:F2} m {inlineXPt + inlineWidthPt:F2} {uy:F2} l S");
+                    }
+                    if (decoration.Contains("line-through"))
+                    {
+                        float ty = inlineYPt + fontSizePt * 0.4f;
+                        sb.AppendLine($"{inlineXPt:F2} {ty:F2} m {inlineXPt + inlineWidthPt:F2} {ty:F2} l S");
+                    }
+                    if (decoration.Contains("overline"))
+                    {
+                        float oy = inlineYPt + fontSizePt * 0.85f;
+                        sb.AppendLine($"{inlineXPt:F2} {oy:F2} m {inlineXPt + inlineWidthPt:F2} {oy:F2} l S");
+                    }
+                }
+            }
         }
 
         var stream = sb.ToString();
@@ -760,7 +937,7 @@ public sealed class PdfWriter
         _buffer.AppendLine($"   /Length {imageData.Length}");
         _buffer.AppendLine(">>");
         _buffer.AppendLine("stream");
-        _buffer.Append(Encoding.ASCII.GetString(imageData));
+        _buffer.Append(imageData);
         _buffer.AppendLine();
         _buffer.AppendLine("endstream");
         _buffer.AppendLine("endobj");

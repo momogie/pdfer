@@ -30,6 +30,7 @@ public sealed class PdfConverterConfiguration
     public EncryptionLevel EncryptionLevel { get; set; } = EncryptionLevel.Aes128Bit;
     public bool DebugMode { get; set; }
     public bool ShowImageErrors { get; set; }
+    public string? ImageBasePath { get; set; }
 
     public string? Title { get; set; }
 
