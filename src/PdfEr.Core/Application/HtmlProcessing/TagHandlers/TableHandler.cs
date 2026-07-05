@@ -56,12 +56,15 @@ public sealed class TableHandler : ITagHandler
                     ComputedStyle = cellLayout.Style,
                 };
 
+                if (cellLayout.Style != null)
+                    LayoutEngine.ApplyBoxModel(cellBox, cellLayout.Style);
+
                 cellBox.InlineContent.Add(new InlineBox
                 {
                     Text = cellLayout.TextContent,
                     Type = InlineBoxType.Text,
-                    X = cellBox.X,
-                    Y = cellBox.Y,
+                    X = cellBox.X + cellBox.PaddingLeft,
+                    Y = cellBox.Y + cellBox.PaddingTop,
                     Width = cellLayout.Width,
                     Height = cellLayout.Height,
                     ComputedStyle = cellBox.ComputedStyle,

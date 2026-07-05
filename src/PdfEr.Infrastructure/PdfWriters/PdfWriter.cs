@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.IO.Compression;
 using System.Text;
+using PdfEr.Core.Application.HtmlProcessing;
 using PdfEr.Core.Application.Interfaces;
 using PdfEr.Core.Domain.Enums;
 using PdfEr.Core.Domain.Forms;
@@ -250,7 +251,7 @@ public sealed class PdfWriter
         float marginTopPt = page.Margins.Top * MmToPt;
 
         var sb = new StringBuilder();
-        sb.Append("BT\n");
+        var colorParser = new ColorParser();
 
         foreach (var block in page.Blocks)
         {
@@ -281,10 +282,56 @@ public sealed class PdfWriter
             float blockXPt = (block.X + block.PaddingLeft) * MmToPt + marginLeftPt;
             float blockYPt = pageH - ((block.Y + block.PaddingTop + fontSizePt * 0.3f) * MmToPt) - marginTopPt;
 
+            // Border box rectangle in PDF coordinates
+            float rectLeftPt = block.X * MmToPt + marginLeftPt;
+            float rectBottomPt = pageH - ((block.Y + block.Height) * MmToPt) - marginTopPt;
+            float rectWidthPt = block.Width * MmToPt;
+            float rectHeightPt = block.Height * MmToPt;
+
+            // Draw background if set
+            string? bgColorVal = null;
+            if (style != null)
+                bgColorVal = style.GetPropertyValue("background-color");
+            if (!string.IsNullOrWhiteSpace(bgColorVal) && bgColorVal != "transparent" && bgColorVal != "rgba(0, 0, 0, 0)")
+            {
+                if (colorParser.TryParse(bgColorVal, out var docColor) && docColor is RgbColor bgRgb && bgRgb.A > 0)
+                {
+                    sb.AppendLine($"{bgRgb.R / 255f:F2} {bgRgb.G / 255f:F2} {bgRgb.B / 255f:F2} rg");
+                    sb.AppendLine($"{rectLeftPt:F2} {rectBottomPt:F2} {rectWidthPt:F2} {rectHeightPt:F2} re f");
+                }
+            }
+
+            // Draw borders if any
+            bool hasBorders = block.BorderTop > 0 || block.BorderBottom > 0 || block.BorderLeft > 0 || block.BorderRight > 0;
+            if (hasBorders)
+            {
+                float br = 0, bg = 0, bb = 0;
+                if (style != null)
+                {
+                    var bColor = style.GetPropertyValue("border-color");
+                    if (!string.IsNullOrWhiteSpace(bColor) && bColor != "transparent")
+                    {
+                        if (colorParser.TryParse(bColor, out var bDocColor) && bDocColor is RgbColor bRgb)
+                        {
+                            br = bRgb.R / 255f; bg = bRgb.G / 255f; bb = bRgb.B / 255f;
+                        }
+                    }
+                }
+                sb.AppendLine($"{br:F2} {bg:F2} {bb:F2} RG");
+
+                // Set border width (use max width for consistency)
+                float bwPt = Math.Max(block.BorderTop, Math.Max(block.BorderBottom, Math.Max(block.BorderLeft, block.BorderRight))) * MmToPt;
+                sb.AppendLine($"{bwPt:F2} w");
+
+                // Draw full rectangle outline
+                sb.AppendLine($"{rectLeftPt:F2} {rectBottomPt:F2} {rectWidthPt:F2} {rectHeightPt:F2} re S");
+            }
+
             var fontIdx = ResolveFontIndex(fontFamily, bold, italic);
             if (!usedFonts.Contains(fontIdx))
                 usedFonts.Add(fontIdx);
 
+            sb.Append("BT\n");
             sb.AppendLine($"{_fontEntries[fontIdx].FontKey} {fontSizePt:F2} Tf");
             sb.AppendLine($"{blockXPt:F2} {blockYPt:F2} Td");
 
@@ -302,9 +349,9 @@ public sealed class PdfWriter
             {
                 sb.AppendLine($"{FormatPdfText(block.TextContent)} Tj");
             }
-        }
 
-        sb.Append("ET\n");
+            sb.Append("ET\n");
+        }
 
         var stream = sb.ToString();
         _buffer.AppendLine($"{num} 0 obj");

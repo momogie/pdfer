@@ -620,6 +620,39 @@ public sealed class PdfConverterIntegrationTests : IDisposable
         Assert.True(PdfTextContains(text, "Footer"));
     }
 
+    [Fact]
+    public void ConvertHtmlToPdf_TableBorder_RendersStrokeOperators()
+    {
+        var converter = _services.GetRequiredService<IPdfConverter>();
+        var html = """
+            <html><head><style>td { border: 1px solid black; }</style></head>
+            <body><table><tr><td>Cell</td></tr></table></body></html>
+            """;
+
+        var pdf = converter.ConvertHtmlToPdf(html);
+        var text = System.Text.Encoding.ASCII.GetString(pdf);
+
+        Assert.Contains("re S", text);
+        Assert.Contains("RG", text);
+        Assert.Contains("w", text);
+    }
+
+    [Fact]
+    public void ConvertHtmlToPdf_TableBackground_RendersFillOperator()
+    {
+        var converter = _services.GetRequiredService<IPdfConverter>();
+        var html = """
+            <html><head><style>th { background-color: #ddeeff; }</style></head>
+            <body><table><tr><th>Header</th></tr></table></body></html>
+            """;
+
+        var pdf = converter.ConvertHtmlToPdf(html);
+        var text = System.Text.Encoding.ASCII.GetString(pdf);
+
+        Assert.Contains("re f", text);
+        Assert.Contains("rg", text);
+    }
+
     public void Dispose()
     {
         if (!_disposed)

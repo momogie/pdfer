@@ -172,7 +172,7 @@ public sealed class PdfConverterService : IPdfConverter
 
                 var attrs = GetAttributes(el);
                 var resolved = _cssMerger.ResolveStyles(tagName, attrs, parentStyle);
-                _cssNormalizer.ExpandShorthands(resolved);
+                resolved = _cssNormalizer.ExpandShorthands(resolved);
 
                 if (IsDisplayNone(resolved))
                     continue;

@@ -136,7 +136,7 @@ public sealed class LayoutEngine
         container.InlineContent.Add(inlineBox);
     }
 
-    private static void ApplyBoxModel(BlockBox box, CssDeclarationBlock styles)
+    public static void ApplyBoxModel(BlockBox box, CssDeclarationBlock styles)
     {
         box.PaddingTop = ParseLength(styles.GetPropertyValue("padding-top"));
         box.PaddingBottom = ParseLength(styles.GetPropertyValue("padding-bottom"));
