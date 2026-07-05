@@ -4,6 +4,7 @@ using PdfEr.Core.Application.HtmlProcessing.TagHandlers;
 using PdfEr.Core.Application.Services;
 using PdfEr.Core.Domain.Barcodes;
 using PdfEr.Core.Domain.Enums;
+using PdfEr.Core.Domain.Layout;
 using PdfEr.Core.Domain.Styles;
 using PdfEr.Core.Domain.Tables;
 using PdfEr.Core.Domain.ValueObjects;
@@ -605,5 +606,485 @@ public class ListStateTests
     {
         Assert.True(new ListState(true, 1, "decimal").IsOrdered);
         Assert.False(new ListState(false, 1, "disc").IsOrdered);
+    }
+}
+
+public class ColorParserTests
+{
+    private readonly ColorParser _parser = new();
+
+    [Fact]
+    public void Parse_NamedColor_Red()
+    {
+        var result = _parser.Parse("red");
+        Assert.IsType<RgbColor>(result);
+        var rgb = (RgbColor)result;
+        Assert.Equal(255, rgb.R);
+        Assert.Equal(0, rgb.G);
+        Assert.Equal(0, rgb.B);
+    }
+
+    [Fact]
+    public void Parse_NamedColor_Black()
+    {
+        var result = _parser.Parse("black");
+        var rgb = (RgbColor)result;
+        Assert.Equal(0, rgb.R);
+        Assert.Equal(0, rgb.G);
+        Assert.Equal(0, rgb.B);
+    }
+
+    [Fact]
+    public void Parse_NamedColor_Transparent()
+    {
+        var result = _parser.Parse("transparent");
+        var rgb = (RgbColor)result;
+        Assert.Equal(0, rgb.A);
+    }
+
+    [Fact]
+    public void Parse_Hex3_ExpandsCorrectly()
+    {
+        var result = _parser.Parse("#f00");
+        var rgb = (RgbColor)result;
+        Assert.Equal(255, rgb.R);
+        Assert.Equal(0, rgb.G);
+        Assert.Equal(0, rgb.B);
+    }
+
+    [Fact]
+    public void Parse_Hex6_ReturnsCorrectColor()
+    {
+        var result = _parser.Parse("#ddeeff");
+        var rgb = (RgbColor)result;
+        Assert.Equal(0xdd, rgb.R);
+        Assert.Equal(0xee, rgb.G);
+        Assert.Equal(0xff, rgb.B);
+    }
+
+    [Fact]
+    public void Parse_Hex8_IncludesAlpha()
+    {
+        var result = _parser.Parse("#ff000080");
+        var rgb = (RgbColor)result;
+        Assert.Equal(255, rgb.R);
+        Assert.Equal(0, rgb.G);
+        Assert.Equal(0, rgb.B);
+        Assert.Equal(128, rgb.A);
+    }
+
+    [Fact]
+    public void Parse_HexWithoutHash_Works()
+    {
+        var result = _parser.Parse("ff0000");
+        var rgb = (RgbColor)result;
+        Assert.Equal(255, rgb.R);
+    }
+
+    [Fact]
+    public void Parse_Rgb_ReturnsCorrectColor()
+    {
+        var result = _parser.Parse("rgb(10, 20, 30)");
+        var rgb = (RgbColor)result;
+        Assert.Equal(10, rgb.R);
+        Assert.Equal(20, rgb.G);
+        Assert.Equal(30, rgb.B);
+    }
+
+    [Fact]
+    public void Parse_Rgba_IncludesAlpha()
+    {
+        var result = _parser.Parse("rgba(255, 0, 0, 0.5)");
+        var rgb = (RgbColor)result;
+        Assert.Equal(255, rgb.R);
+        Assert.Equal(0, rgb.G);
+        Assert.Equal(0, rgb.B);
+        // 0.5 * 255 = 127.5 → truncated to 127
+        Assert.Equal(127, rgb.A);
+    }
+
+    [Fact]
+    public void Parse_Hsl_ConvertsToRgb()
+    {
+        var result = _parser.Parse("hsl(0, 100%, 50%)");
+        var rgb = (RgbColor)result;
+        Assert.Equal(255, rgb.R);
+        Assert.Equal(0, rgb.G);
+        Assert.Equal(0, rgb.B);
+    }
+
+    [Fact]
+    public void Parse_Cmyk_ReturnsCmykColor()
+    {
+        var result = _parser.Parse("cmyk(0, 1, 0, 0)");
+        Assert.IsType<CmykColor>(result);
+    }
+
+    [Fact]
+    public void Parse_Invalid_ReturnsBlack()
+    {
+        var result = _parser.Parse("not-a-color");
+        var rgb = (RgbColor)result;
+        Assert.Equal(0, rgb.R);
+        Assert.Equal(0, rgb.G);
+        Assert.Equal(0, rgb.B);
+    }
+
+    [Fact]
+    public void TryParse_EmptyString_ReturnsFalse()
+    {
+        Assert.False(_parser.TryParse("", out _));
+        Assert.False(_parser.TryParse(null!, out _));
+    }
+
+    [Fact]
+    public void TryParse_WhiteSpace_ReturnsFalse()
+    {
+        Assert.False(_parser.TryParse("   ", out _));
+    }
+
+    [Fact]
+    public void TryParse_ValidColor_ReturnsTrue()
+    {
+        Assert.True(_parser.TryParse("blue", out var color));
+        Assert.NotNull(color);
+    }
+}
+
+public class CssNormalizerTests
+{
+    private readonly CssNormalizer _normalizer = new();
+
+    [Fact]
+    public void ExpandShorthands_Border_ExpandsToWidthStyleColor()
+    {
+        var block = new CssDeclarationBlock();
+        block.SetProperty("border", "1px solid red");
+
+        var result = _normalizer.ExpandShorthands(block);
+
+        Assert.Equal("1px", result.GetPropertyValue("border-top-width"));
+        Assert.Equal("1px", result.GetPropertyValue("border-right-width"));
+        Assert.Equal("1px", result.GetPropertyValue("border-bottom-width"));
+        Assert.Equal("1px", result.GetPropertyValue("border-left-width"));
+        Assert.Equal("solid", result.GetPropertyValue("border-top-style"));
+        Assert.Equal("red", result.GetPropertyValue("border-top-color"));
+    }
+
+    [Fact]
+    public void ExpandShorthands_BorderShorthandOnly_DoesNotOverrideExistingLonghands()
+    {
+        var block = new CssDeclarationBlock();
+        block.SetProperty("border-top-width", "5px");
+        block.SetProperty("border", "1px solid blue");
+
+        // Clone creates a copy, so original is not modified
+        var result = _normalizer.ExpandShorthands(block);
+
+        // The clone starts from original values, then border overwrites
+        Assert.Equal("1px", result.GetPropertyValue("border-top-width"));
+    }
+
+    [Fact]
+    public void ExpandShorthands_BorderSide_ExpandsCorrectly()
+    {
+        var block = new CssDeclarationBlock();
+        block.SetProperty("border-left", "3px dotted green");
+
+        var result = _normalizer.ExpandShorthands(block);
+
+        Assert.Equal("3px", result.GetPropertyValue("border-left-width"));
+        Assert.Equal("dotted", result.GetPropertyValue("border-left-style"));
+        Assert.Equal("green", result.GetPropertyValue("border-left-color"));
+    }
+
+    [Fact]
+    public void ExpandShorthands_MarginSingle_AppliesToAllSides()
+    {
+        var block = new CssDeclarationBlock();
+        block.SetProperty("margin", "10px");
+
+        var result = _normalizer.ExpandShorthands(block);
+        Assert.Equal("10px", result.GetPropertyValue("margin-top"));
+        Assert.Equal("10px", result.GetPropertyValue("margin-right"));
+        Assert.Equal("10px", result.GetPropertyValue("margin-bottom"));
+        Assert.Equal("10px", result.GetPropertyValue("margin-left"));
+    }
+
+    [Fact]
+    public void ExpandShorthands_MarginTwoValues_AppliesCorrectly()
+    {
+        var block = new CssDeclarationBlock();
+        block.SetProperty("margin", "10px 20px");
+
+        var result = _normalizer.ExpandShorthands(block);
+        Assert.Equal("10px", result.GetPropertyValue("margin-top"));
+        Assert.Equal("20px", result.GetPropertyValue("margin-right"));
+        Assert.Equal("10px", result.GetPropertyValue("margin-bottom"));
+        Assert.Equal("20px", result.GetPropertyValue("margin-left"));
+    }
+
+    [Fact]
+    public void ExpandShorthands_MarginThreeValues_AppliesCorrectly()
+    {
+        var block = new CssDeclarationBlock();
+        block.SetProperty("margin", "10px 20px 30px");
+
+        var result = _normalizer.ExpandShorthands(block);
+        Assert.Equal("10px", result.GetPropertyValue("margin-top"));
+        Assert.Equal("20px", result.GetPropertyValue("margin-right"));
+        Assert.Equal("30px", result.GetPropertyValue("margin-bottom"));
+        Assert.Equal("20px", result.GetPropertyValue("margin-left"));
+    }
+
+    [Fact]
+    public void ExpandShorthands_MarginFourValues_AppliesCorrectly()
+    {
+        var block = new CssDeclarationBlock();
+        block.SetProperty("margin", "1px 2px 3px 4px");
+
+        var result = _normalizer.ExpandShorthands(block);
+        Assert.Equal("1px", result.GetPropertyValue("margin-top"));
+        Assert.Equal("2px", result.GetPropertyValue("margin-right"));
+        Assert.Equal("3px", result.GetPropertyValue("margin-bottom"));
+        Assert.Equal("4px", result.GetPropertyValue("margin-left"));
+    }
+
+    [Fact]
+    public void ExpandShorthands_Padding_AppliesCorrectly()
+    {
+        var block = new CssDeclarationBlock();
+        block.SetProperty("padding", "5pt");
+
+        var result = _normalizer.ExpandShorthands(block);
+        Assert.Equal("5pt", result.GetPropertyValue("padding-top"));
+        Assert.Equal("5pt", result.GetPropertyValue("padding-right"));
+        Assert.Equal("5pt", result.GetPropertyValue("padding-bottom"));
+        Assert.Equal("5pt", result.GetPropertyValue("padding-left"));
+    }
+
+    [Fact]
+    public void ExpandShorthands_OriginalUnchanged()
+    {
+        var block = new CssDeclarationBlock();
+        block.SetProperty("border", "2px solid green");
+
+        var _ = _normalizer.ExpandShorthands(block);
+
+        Assert.Null(block.GetPropertyValue("border-top-width"));
+        Assert.Equal("2px solid green", block.GetPropertyValue("border"));
+    }
+
+    [Fact]
+    public void ExpandShorthands_NoShorthand_ReturnsClone()
+    {
+        var block = new CssDeclarationBlock();
+        block.SetProperty("color", "red");
+
+        var result = _normalizer.ExpandShorthands(block);
+
+        Assert.Equal("red", result.GetPropertyValue("color"));
+    }
+
+    [Fact]
+    public void ExpandShorthands_TextDecoration_Expands()
+    {
+        var block = new CssDeclarationBlock();
+        block.SetProperty("text-decoration", "underline");
+
+        var result = _normalizer.ExpandShorthands(block);
+
+        Assert.Equal("underline", result.GetPropertyValue("text-decoration-line"));
+    }
+
+    [Fact]
+    public void ExpandShorthands_ListStyle_Expands()
+    {
+        var block = new CssDeclarationBlock();
+        block.SetProperty("list-style", "square inside");
+
+        var result = _normalizer.ExpandShorthands(block);
+
+        Assert.Equal("square", result.GetPropertyValue("list-style-type"));
+        Assert.Equal("inside", result.GetPropertyValue("list-style-position"));
+    }
+
+    [Fact]
+    public void ExpandShorthands_Font_Expands()
+    {
+        var block = new CssDeclarationBlock();
+        block.SetProperty("font", "bold 12pt serif");
+
+        var result = _normalizer.ExpandShorthands(block);
+
+        Assert.Equal("bold", result.GetPropertyValue("font-weight"));
+        Assert.Equal("12pt", result.GetPropertyValue("font-size"));
+        Assert.Equal("serif", result.GetPropertyValue("font-family"));
+    }
+}
+
+public class LayoutEngineStaticTests
+{
+    [Fact]
+    public void ApplyBoxModel_PaddingValues_ParsedCorrectly()
+    {
+        var styles = new CssDeclarationBlock();
+        styles.SetProperty("padding-top", "10px");
+        styles.SetProperty("padding-bottom", "5mm");
+        styles.SetProperty("padding-left", "2pt");
+        styles.SetProperty("padding-right", "1cm");
+
+        var box = new BlockBox();
+        LayoutEngine.ApplyBoxModel(box, styles);
+
+        Assert.Equal(10 * 0.2646f, box.PaddingTop, 3);
+        Assert.Equal(5f, box.PaddingBottom, 3);
+        Assert.Equal(2 * 0.3528f, box.PaddingLeft, 3);
+        Assert.Equal(10f, box.PaddingRight, 3);
+    }
+
+    [Fact]
+    public void ApplyBoxModel_MarginValues_ParsedCorrectly()
+    {
+        var styles = new CssDeclarationBlock();
+        styles.SetProperty("margin-top", "10mm");
+
+        var box = new BlockBox();
+        LayoutEngine.ApplyBoxModel(box, styles);
+
+        Assert.Equal(10f, box.MarginTop, 3);
+    }
+
+    [Fact]
+    public void ApplyBoxModel_BorderValues_ParsedCorrectly()
+    {
+        var styles = new CssDeclarationBlock();
+        styles.SetProperty("border-top-width", "1px");
+        styles.SetProperty("border-bottom-width", "medium");
+        styles.SetProperty("border-left-width", "thick");
+        styles.SetProperty("border-right-width", "thin");
+
+        var box = new BlockBox();
+        LayoutEngine.ApplyBoxModel(box, styles);
+
+        Assert.Equal(0.2646f, box.BorderTop, 3);
+        Assert.Equal(1f, box.BorderBottom, 3); // medium = 1mm
+        Assert.Equal(2f, box.BorderLeft, 3); // thick = 2mm
+        Assert.Equal(0.5f, box.BorderRight, 3); // thin = 0.5mm
+    }
+
+    [Fact]
+    public void ApplyBoxModel_EmptyStyle_AllZero()
+    {
+        var box = new BlockBox();
+        LayoutEngine.ApplyBoxModel(box, new CssDeclarationBlock());
+
+        Assert.Equal(0, box.PaddingTop);
+        Assert.Equal(0, box.MarginTop);
+        Assert.Equal(0, box.BorderTop);
+    }
+
+    [Fact]
+    public void ApplyBoxModel_MissingProperties_DefaultsToZero()
+    {
+        var styles = new CssDeclarationBlock();
+        styles.SetProperty("color", "red");
+
+        var box = new BlockBox();
+        LayoutEngine.ApplyBoxModel(box, styles);
+
+        Assert.Equal(0, box.PaddingTop);
+        Assert.Equal(0, box.MarginTop);
+        Assert.Equal(0, box.BorderTop);
+    }
+
+    [Fact]
+    public void ParseLength_Px_ConvertsCorrectly()
+    {
+        // ParseLength is private, tested indirectly via ApplyBoxModel
+        // We can reach it through the known conversion: 1px = 0.2646mm
+        var styles = new CssDeclarationBlock();
+        styles.SetProperty("padding-top", "100px");
+
+        var box = new BlockBox();
+        LayoutEngine.ApplyBoxModel(box, styles);
+
+        Assert.Equal(26.46f, box.PaddingTop, 2);
+    }
+
+    [Fact]
+    public void ParseLength_Pt_ConvertsCorrectly()
+    {
+        var styles = new CssDeclarationBlock();
+        styles.SetProperty("padding-top", "72pt");
+
+        var box = new BlockBox();
+        LayoutEngine.ApplyBoxModel(box, styles);
+
+        Assert.Equal(72 * 0.3528f, box.PaddingTop, 2);
+    }
+
+    [Fact]
+    public void ParseLength_Mm_StaysAsIs()
+    {
+        var styles = new CssDeclarationBlock();
+        styles.SetProperty("padding-top", "25.4mm");
+
+        var box = new BlockBox();
+        LayoutEngine.ApplyBoxModel(box, styles);
+
+        Assert.Equal(25.4f, box.PaddingTop, 2);
+    }
+
+    [Fact]
+    public void ParseLength_Cm_ConvertsToMm()
+    {
+        var styles = new CssDeclarationBlock();
+        styles.SetProperty("margin-top", "1cm");
+
+        var box = new BlockBox();
+        LayoutEngine.ApplyBoxModel(box, styles);
+
+        Assert.Equal(10f, box.MarginTop, 2);
+    }
+
+    [Fact]
+    public void ParseLength_In_ConvertsToMm()
+    {
+        var styles = new CssDeclarationBlock();
+        styles.SetProperty("margin-top", "1in");
+
+        var box = new BlockBox();
+        LayoutEngine.ApplyBoxModel(box, styles);
+
+        Assert.Equal(25.4f, box.MarginTop, 2);
+    }
+
+    [Fact]
+    public void ParseLength_Zero_ReturnsZero()
+    {
+        var styles = new CssDeclarationBlock();
+        styles.SetProperty("padding-top", "0");
+
+        var box = new BlockBox();
+        LayoutEngine.ApplyBoxModel(box, styles);
+
+        Assert.Equal(0, box.PaddingTop);
+    }
+
+    [Fact]
+    public void ParseLength_Thin_Medium_Thick_HaveCorrectValues()
+    {
+        var styles = new CssDeclarationBlock();
+        styles.SetProperty("border-top-width", "thin");
+        styles.SetProperty("border-bottom-width", "medium");
+        styles.SetProperty("border-left-width", "thick");
+
+        var box = new BlockBox();
+        LayoutEngine.ApplyBoxModel(box, styles);
+
+        Assert.Equal(0.5f, box.BorderTop, 2);
+        Assert.Equal(1f, box.BorderBottom, 2);
+        Assert.Equal(2f, box.BorderLeft, 2);
     }
 }

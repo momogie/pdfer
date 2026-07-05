@@ -159,15 +159,15 @@ public sealed class LayoutEngine
         value = value.Trim().ToLowerInvariant();
         if (value == "0" || value == "0px" || value == "0pt" || value == "0mm") return 0;
 
+        if (value is "thin") return 0.5f;
+        if (value is "medium") return 1f;
+        if (value is "thick") return 2f;
+
         if (value.EndsWith("mm")) return float.TryParse(value[..^2], out var v) ? v : 0;
         if (value.EndsWith("pt")) return float.TryParse(value[..^2], out var v) ? v * 0.3528f : 0;
         if (value.EndsWith("px")) return float.TryParse(value[..^2], out var v) ? v * 0.2646f : 0;
         if (value.EndsWith("cm")) return float.TryParse(value[..^2], out var v) ? v * 10f : 0;
         if (value.EndsWith("in")) return float.TryParse(value[..^2], out var v) ? v * 25.4f : 0;
-
-        if (value is "thin") return 0.5f;
-        if (value is "medium") return 1f;
-        if (value is "thick") return 2f;
 
         if (float.TryParse(value, out var num)) return num;
 
