@@ -96,8 +96,12 @@ public sealed class TableLayoutEngine
             }
         }
 
+        // Ensure no column ends up with zero or negative width
+        float minColWidth = 2f;
         for (int i = 0; i < colCount; i++)
         {
+            if (colWidths[i] <= 0) colWidths[i] = minColWidth;
+            if (minWidths[i] <= 0) minWidths[i] = minColWidth;
             result.Columns.Add(new TableColumnInfo
             {
                 Index = i,
@@ -113,6 +117,10 @@ public sealed class TableLayoutEngine
     private void LayoutRows(TableDefinition table, TableLayoutResult result)
     {
         float y = 0;
+        int colCount = result.Columns.Count;
+
+        // Track rowspan: for each column, the remaining rows it is spanned
+        var rowspanTracker = new (int remainingRows, float cellY, float height)[colCount];
 
         foreach (var row in table.Rows)
         {
@@ -123,20 +131,56 @@ public sealed class TableLayoutEngine
                 Height = row.Height > 0 ? row.Height : 20f
             };
 
+            // Track which columns are occupied by rowspan from previous rows
+            var occupiedCols = new HashSet<int>();
+            for (int c = 0; c < colCount; c++)
+            {
+                if (rowspanTracker[c].remainingRows > 0)
+                {
+                    occupiedCols.Add(c);
+                    rowspanTracker[c] = (rowspanTracker[c].remainingRows - 1,
+                        rowspanTracker[c].cellY, rowspanTracker[c].height);
+                }
+            }
+
             foreach (var cell in row.Cells)
             {
+                int col = cell.ColumnIndex;
+                int spanEnd = Math.Min(col + cell.ColSpan, colCount);
+
+                // Skip if all columns in span are occupied by rowspan
+                bool allOccupied = true;
+                for (int c = col; c < spanEnd; c++)
+                {
+                    if (!occupiedCols.Contains(c)) { allOccupied = false; break; }
+                }
+                if (allOccupied) continue;
+
+                // Check for overlap with another cell in the same row
+                bool overlaps = false;
+                foreach (var existing in rowLayout.Cells)
+                {
+                    int eColEnd = existing.ColumnIndex + existing.ColSpan;
+                    int newColEnd = col + cell.ColSpan;
+                    if (col < eColEnd && existing.ColumnIndex < newColEnd)
+                    {
+                        overlaps = true; break;
+                    }
+                }
+                if (overlaps) continue;
+
                 float cellX = 0;
-                for (int c = 0; c < cell.ColumnIndex && c < result.Columns.Count; c++)
+                for (int c = 0; c < col && c < colCount; c++)
                     cellX += result.Columns[c].Width;
 
                 float cellWidth = 0;
-                for (int c = cell.ColumnIndex; c < cell.ColumnIndex + cell.ColSpan && c < result.Columns.Count; c++)
+                for (int c = col; c < spanEnd && c < colCount; c++)
                     cellWidth += result.Columns[c].Width;
 
                 rowLayout.Cells.Add(new TableCellLayout
                 {
                     RowIndex = cell.RowIndex,
-                    ColumnIndex = cell.ColumnIndex,
+                    ColumnIndex = col,
                     ColSpan = cell.ColSpan,
                     RowSpan = cell.RowSpan,
                     X = cellX,
@@ -146,6 +190,15 @@ public sealed class TableLayoutEngine
                     TextContent = cell.TextContent,
                     Style = cell.ComputedStyle ?? cell.Style
                 });
+
+                // Track rowspan
+                if (cell.RowSpan > 1)
+                {
+                    for (int c = col; c < spanEnd; c++)
+                    {
+                        rowspanTracker[c] = (cell.RowSpan - 1, y, rowLayout.Height);
+                    }
+                }
             }
 
             result.Rows.Add(rowLayout);

@@ -580,10 +580,24 @@ public class ListStateTests
     }
 
     [Fact]
-    public void UnorderedList_WithCustomStyleType_UsesBullet()
+    public void UnorderedList_WithCustomStyleType_UsesCircle()
     {
         var state = new ListState(false, 1, "circle");
-        Assert.Equal("\u2022", state.GetMarker());
+        Assert.Equal("\u25CB", state.GetMarker());
+    }
+
+    [Fact]
+    public void UnorderedList_WithSquareStyleType_UsesSquare()
+    {
+        var state = new ListState(false, 1, "square");
+        Assert.Equal("\u25A0", state.GetMarker());
+    }
+
+    [Fact]
+    public void UnorderedList_WithNoneStyleType_ReturnsEmpty()
+    {
+        var state = new ListState(false, 1, "none");
+        Assert.Equal("", state.GetMarker());
     }
 
     [Fact]

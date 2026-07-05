@@ -15,6 +15,9 @@ public sealed class LayoutEngine
     private DocumentLayout _document = null!;
     private PageLayout _currentPage = null!;
     private float _currentY;
+    private float _currentInlineX;
+    private float _currentInlineY;
+    private float _currentInlineLineHeight;
     public float CurrentY => _currentY;
     public PageLayout CurrentPage => _currentPage;
     private BlockBox? _currentBlockContainer;
@@ -53,14 +56,86 @@ public sealed class LayoutEngine
         AddNewPage(config);
     }
 
-    private void AddNewPage(PdfConverterConfiguration config)
+    private void AddNewPage(PdfConverterConfiguration config, string? pageName = null)
     {
         var size = PageSize.FromOrientation(
             PageSize.FromFormat(config.PageFormat), config.Orientation);
+        var margins = config.GetMargins();
 
-        _currentPage = new PageLayout(size, config.Orientation, config.GetMargins(), _document.Pages.Count + 1);
+        // Apply @page rule if matched
+        CssPageRule? matchedRule = null;
+        foreach (var rule in _cssMerger.PageRules)
+        {
+            if (rule.PseudoClass != null) continue; // skip :first, :left, :right for now
+            if (rule.PageName == pageName || (rule.PageName == null && pageName == null))
+            {
+                matchedRule = rule;
+                break;
+            }
+        }
+
+        if (matchedRule != null)
+        {
+            var decl = matchedRule.Declarations;
+            var sizeVal = decl.GetPropertyValue("size");
+            if (!string.IsNullOrWhiteSpace(sizeVal))
+            {
+                sizeVal = sizeVal.Trim().ToLowerInvariant();
+                var parsed = ParsePageSize(sizeVal);
+                if (parsed.HasValue)
+                    size = parsed.Value;
+            }
+
+            float ruleMl = ParseLength(decl.GetPropertyValue("margin-left"));
+            float ruleMr = ParseLength(decl.GetPropertyValue("margin-right"));
+            float ruleMt = ParseLength(decl.GetPropertyValue("margin-top"));
+            float ruleMb = ParseLength(decl.GetPropertyValue("margin-bottom"));
+            float ruleMargin = ParseLength(decl.GetPropertyValue("margin"));
+
+            if (ruleMargin > 0)
+            {
+                if (ruleMl <= 0) ruleMl = ruleMargin;
+                if (ruleMr <= 0) ruleMr = ruleMargin;
+                if (ruleMt <= 0) ruleMt = ruleMargin;
+                if (ruleMb <= 0) ruleMb = ruleMargin;
+            }
+
+            float ml = ruleMl > 0 ? ruleMl : margins.Left;
+            float mr = ruleMr > 0 ? ruleMr : margins.Right;
+            float mt = ruleMt > 0 ? ruleMt : margins.Top;
+            float mb = ruleMb > 0 ? ruleMb : margins.Bottom;
+            margins = new DocumentMargins(mt, mb, ml, mr, margins.Header, margins.Footer);
+        }
+
+        _currentPage = new PageLayout(size, config.Orientation, margins, _document.Pages.Count + 1);
+        _currentPage.PageName = pageName;
         _document.Pages.Add(_currentPage);
         _currentY = _currentPage.ContentBox.Y;
+        _currentInlineX = _currentPage.ContentBox.X;
+        _currentInlineY = _currentY;
+        _currentInlineLineHeight = 0;
+    }
+
+    private static PageSize? ParsePageSize(string value)
+    {
+        value = value.Trim().ToLowerInvariant();
+        if (value == "a4") return PageSize.FromFormat(PageFormat.A4);
+        if (value == "a3") return PageSize.FromFormat(PageFormat.A3);
+        if (value == "a5") return PageSize.FromFormat(PageFormat.A5);
+        if (value == "letter") return PageSize.FromFormat(PageFormat.Letter);
+        if (value == "legal") return PageSize.FromFormat(PageFormat.Legal);
+        if (value == "tabloid") return PageSize.FromFormat(PageFormat.Tabloid);
+
+        // Custom size: "width height" in mm/pt/px/in/cm
+        var parts = value.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length >= 2)
+        {
+            float w = ParseLength(parts[0]);
+            float h = ParseLength(parts[1]);
+            if (w > 0 && h > 0)
+                return new PageSize(w, h);
+        }
+        return null;
     }
 
     public BlockBox CreateBlock(string tagName, Dictionary<string, string> attributes, CssDeclarationBlock? parentStyle = null)
@@ -94,10 +169,64 @@ public sealed class LayoutEngine
     {
         box.Y = _currentY;
 
-        if (box.TagName is "h1" or "h2" or "h3" or "h4" or "h5" or "h6" or "p" or "div"
+        var display = box.ComputedStyle?.GetPropertyValue("display");
+        bool isInlineBlock = display == "inline-block";
+
+        if (isInlineBlock || box.TagName is "h1" or "h2" or "h3" or "h4" or "h5" or "h6" or "p" or "div"
             or "li" or "ul" or "ol" or "blockquote" or "pre" or "section" or "article"
             or "header" or "footer" or "nav" or "main" or "td" or "th" or "hr" or "img")
         {
+            var fontSize = GetFontSize(box.ComputedStyle);
+
+            if (isInlineBlock)
+            {
+                box.Type = BlockBoxType.InlineBlock;
+
+                // Shrink-to-fit width if not explicitly set
+                var cssWidth = box.ComputedStyle?.GetPropertyValue("width");
+                if (string.IsNullOrWhiteSpace(cssWidth) || cssWidth == "auto")
+                {
+                    int textLen = box.TextContent?.Length ?? (box.InlineContent.Count > 0 ? 1 : 0);
+                    box.Width = Math.Max(textLen * fontSize * 0.5f, fontSize) + box.PaddingLeft + box.PaddingRight + box.BorderLeft + box.BorderRight;
+                }
+
+                // Check if we need to wrap to next line
+                if (_currentInlineX + box.Width > _currentPage.ContentBox.Right)
+                {
+                    _currentInlineX = _currentPage.ContentBox.X;
+                    _currentInlineY += _currentInlineLineHeight;
+                    _currentInlineLineHeight = 0;
+                }
+
+                box.X = _currentInlineX;
+                box.Y = _currentInlineY;
+                _currentInlineX += box.Width;
+
+                if (box.Height <= 0)
+                    box.Height = fontSize * 1.3f + box.PaddingTop + box.PaddingBottom;
+
+                _currentInlineLineHeight = Math.Max(_currentInlineLineHeight, box.Height);
+
+                if (!string.IsNullOrWhiteSpace(box.TextContent))
+                {
+                    var inlineBox = new InlineBox
+                    {
+                        Text = box.TextContent,
+                        Type = InlineBoxType.Text,
+                        X = box.X + box.PaddingLeft + box.BorderLeft,
+                        Y = box.Y + box.PaddingTop,
+                        Width = box.ContentWidth,
+                        Height = fontSize * 1.3f,
+                        ComputedStyle = box.ComputedStyle
+                    };
+                    box.InlineContent.Add(inlineBox);
+                }
+
+                _currentPage.Blocks.Add(box);
+                _currentBlockContainer = box;
+                return;
+            }
+
             _currentY += box.MarginTop;
             box.Y = _currentY;
 
@@ -117,7 +246,6 @@ public sealed class LayoutEngine
                 }
             }
 
-            var fontSize = GetFontSize(box.ComputedStyle);
             if (box.Height <= 0)
                 box.Height = fontSize * 1.3f + box.PaddingTop + box.PaddingBottom;
 
@@ -129,6 +257,35 @@ public sealed class LayoutEngine
                     box.Height = parsed;
             }
 
+            // CSS position support
+            var cssPosition = box.ComputedStyle?.GetPropertyValue("position");
+            bool isRelative = cssPosition == "relative";
+            bool isAbsolute = cssPosition == "absolute";
+
+            float offsetTop = 0, offsetRight = 0, offsetBottom = 0, offsetLeft = 0;
+            if (isRelative || isAbsolute)
+            {
+                offsetTop = ParseLength(box.ComputedStyle?.GetPropertyValue("top"));
+                offsetRight = ParseLength(box.ComputedStyle?.GetPropertyValue("right"));
+                offsetBottom = ParseLength(box.ComputedStyle?.GetPropertyValue("bottom"));
+                offsetLeft = ParseLength(box.ComputedStyle?.GetPropertyValue("left"));
+            }
+
+            if (isAbsolute)
+            {
+                box.Type = BlockBoxType.Absolute;
+                // Position relative to page content box (nearest positioned ancestor)
+                float posX = _currentPage.ContentBox.X;
+                float posY = _currentPage.ContentBox.Y;
+                if (offsetLeft > 0) posX += offsetLeft;
+                else if (offsetRight > 0) posX = _currentPage.ContentBox.Right - box.Width - offsetRight;
+                if (offsetTop > 0) posY += offsetTop;
+                else if (offsetBottom > 0) posY = _currentPage.ContentBox.Bottom - box.Height - offsetBottom;
+                box.X = posX;
+                box.Y = posY;
+                // Do not advance _currentY — removed from normal flow
+            }
+
             if (!string.IsNullOrWhiteSpace(box.TextContent))
             {
                 var inlineBox = new InlineBox
@@ -136,7 +293,7 @@ public sealed class LayoutEngine
                     Text = box.TextContent,
                     Type = InlineBoxType.Text,
                     X = box.X + box.PaddingLeft + box.BorderLeft,
-                    Y = _currentY + box.PaddingTop,
+                    Y = (isAbsolute ? box.Y : _currentY) + box.PaddingTop,
                     Width = box.ContentWidth,
                     Height = fontSize * 1.3f,
                     ComputedStyle = box.ComputedStyle
@@ -144,14 +301,34 @@ public sealed class LayoutEngine
                 box.InlineContent.Add(inlineBox);
             }
 
+            if (isAbsolute)
+            {
+                _currentPage.Blocks.Add(box);
+                _currentBlockContainer = box;
+                return;
+            }
+
+            if (isRelative)
+            {
+                box.Type = BlockBoxType.Relative;
+                box.X += offsetLeft - offsetRight;
+                box.Y += offsetTop - offsetBottom;
+            }
+
             _currentY += box.Height + box.MarginBottom;
 
             if (_currentY > _currentPage.ContentBox.Bottom)
             {
-                AddNewPage(config);
+                var blockPageName = box.ComputedStyle?.GetPropertyValue("page");
+                AddNewPage(config, string.IsNullOrWhiteSpace(blockPageName) ? null : blockPageName);
                 box.Y = _currentY;
                 _currentY += box.Height + box.MarginBottom;
             }
+
+            // Reset inline flow after a block element
+            _currentInlineX = _currentPage.ContentBox.X;
+            _currentInlineY = _currentY;
+            _currentInlineLineHeight = 0;
 
             _currentPage.Blocks.Add(box);
         }

@@ -75,7 +75,13 @@ public sealed class ListState
     {
         if (!IsOrdered)
         {
-            return "\u2022";
+            return ListStyleType switch
+            {
+                "circle" => "\u25CB",
+                "square" => "\u25A0",
+                "none" => "",
+                _ => "\u2022"
+            };
         }
 
         return ListStyleType switch

@@ -169,14 +169,18 @@ public sealed class PdfWriter
         var pageFontIndices = new List<List<int>>();
         var pageImageRefs = new List<List<(string Name, int ObjNum)>>();
 
+        var pageOpacities = new List<List<float>>();
+
         foreach (var page in layout.Pages)
         {
             var usedFonts = new List<int>();
             var images = new List<(string Name, int ObjNum)>();
-            var contentNum = WriteBlockContentStream(page, config, usedFonts, images);
+            var usedOpacs = new List<float>();
+            var contentNum = WriteBlockContentStream(page, config, usedFonts, images, usedOpacs, layout.Pages.Count);
             contentNums.Add(contentNum);
             pageFontIndices.Add(usedFonts);
             pageImageRefs.Add(images);
+            pageOpacities.Add(usedOpacs);
         }
 
         WriteAllFontObjects();
@@ -215,7 +219,8 @@ public sealed class PdfWriter
 
             var fontResources = BuildFontResourcesDict(pageFontIndices[i]);
             var xObjectResources = BuildXObjectDict(pageImageRefs[i]);
-            _buffer.AppendLine($"   /Resources << /Font << {fontResources} >> {xObjectResources}>>");
+            var extGStateResources = BuildExtGStateDict(pageOpacities[i]);
+            _buffer.AppendLine($"   /Resources << /Font << {fontResources} >> {xObjectResources} {extGStateResources}>>");
             _buffer.AppendLine(">>");
             _buffer.AppendLine("endobj");
 
@@ -263,7 +268,22 @@ public sealed class PdfWriter
         return $"/XObject << {string.Join(" ", parts)} >> ";
     }
 
-    private int WriteBlockContentStream(PageLayout page, PdfConverterConfiguration config, List<int> usedFonts, List<(string Name, int ObjNum)> pageImages)
+    private static string BuildExtGStateDict(List<float> opacities)
+    {
+        if (opacities.Count == 0)
+            return "";
+
+        var parts = new List<string>();
+        foreach (var op in opacities)
+        {
+            string gsName = $"/GS_{op:F1}".Replace(".", "_");
+            string opStr = op.ToString("F2", System.Globalization.CultureInfo.InvariantCulture);
+            parts.Add($"{gsName} << /ca {opStr} /CA {opStr} >>");
+        }
+        return $"/ExtGState << {string.Join(" ", parts)} >> ";
+    }
+
+    private int WriteBlockContentStream(PageLayout page, PdfConverterConfiguration config, List<int> usedFonts, List<(string Name, int ObjNum)> pageImages, List<float>? usedOpacities = null, int totalPages = 1)
     {
         RecordObjectOffset();
         var num = AllocateObjectNumber();
@@ -287,6 +307,18 @@ public sealed class PdfWriter
         foreach (var block in allBlocks)
         {
             var style = block.ComputedStyle;
+
+            // Collect opacity for ExtGState
+            if (usedOpacities != null && style != null)
+            {
+                var opVal = style.GetPropertyValue("opacity");
+                if (!string.IsNullOrWhiteSpace(opVal) && float.TryParse(opVal, out var opacity) && opacity >= 0 && opacity < 1f)
+                {
+                    float rounded = MathF.Round(opacity * 10f) / 10f;
+                    if (!usedOpacities.Contains(rounded))
+                        usedOpacities.Add(rounded);
+                }
+            }
             bool hasBorders = block.BorderTop > 0 || block.BorderBottom > 0 || block.BorderLeft > 0 || block.BorderRight > 0;
             bool hasBackground = false;
             if (style != null)
@@ -327,6 +359,23 @@ public sealed class PdfWriter
             float rectWidthPt = block.Width * MmToPt;
             float rectHeightPt = block.Height * MmToPt;
 
+            // Parse border-radius
+            float borderRadiusPt = ParseBorderRadius(style);
+
+            // Emit opacity gs command if needed
+            float blockOpacity = 1f;
+            if (style != null)
+            {
+                var opVal = style.GetPropertyValue("opacity");
+                if (!string.IsNullOrWhiteSpace(opVal) && float.TryParse(opVal, out var op) && op >= 0 && op < 1f)
+                {
+                    blockOpacity = op;
+                    float rounded = MathF.Round(op * 10f) / 10f;
+                    string gsName = $"/GS_{rounded:F1}".Replace(".", "_");
+                    sb.AppendLine($"{gsName} gs");
+                }
+            }
+
             // Draw background if set
             string? bgColorVal = null;
             if (style != null)
@@ -336,7 +385,10 @@ public sealed class PdfWriter
                 if (colorParser.TryParse(bgColorVal, out var docColor) && docColor is RgbColor bgRgb && bgRgb.A > 0)
                 {
                     sb.AppendLine($"{bgRgb.R / 255f:F2} {bgRgb.G / 255f:F2} {bgRgb.B / 255f:F2} rg");
-                    sb.AppendLine($"{rectLeftPt:F2} {rectBottomPt:F2} {rectWidthPt:F2} {rectHeightPt:F2} re f");
+                    if (borderRadiusPt > 0)
+                        AppendRoundedRectPath(sb, rectLeftPt, rectBottomPt, rectWidthPt, rectHeightPt, borderRadiusPt, "f");
+                    else
+                        sb.AppendLine($"{rectLeftPt:F2} {rectBottomPt:F2} {rectWidthPt:F2} {rectHeightPt:F2} re f");
                 }
             }
 
@@ -361,8 +413,10 @@ public sealed class PdfWriter
                 float bwPt = Math.Max(block.BorderTop, Math.Max(block.BorderBottom, Math.Max(block.BorderLeft, block.BorderRight))) * MmToPt;
                 sb.AppendLine($"{bwPt:F2} w");
 
-                // Draw full rectangle outline
-                sb.AppendLine($"{rectLeftPt:F2} {rectBottomPt:F2} {rectWidthPt:F2} {rectHeightPt:F2} re S");
+                if (borderRadiusPt > 0)
+                    AppendRoundedRectPath(sb, rectLeftPt, rectBottomPt, rectWidthPt, rectHeightPt, borderRadiusPt, "S");
+                else
+                    sb.AppendLine($"{rectLeftPt:F2} {rectBottomPt:F2} {rectWidthPt:F2} {rectHeightPt:F2} re S");
             }
 
             var fontIdx = ResolveFontIndex(fontFamily, bold, italic);
@@ -458,14 +512,15 @@ public sealed class PdfWriter
                     WriteSimpleTextBlock(sb, simpleText, singleInlineForDeco,
                         contentWidthPt, lineHeightPt, blockXPt, blockYPt,
                         fontSizePt, textAlign, fontFamily, bold, italic, fontIdx,
-                        style, colorParser);
+                        style, colorParser, page.PageNumber, totalPages);
                 }
                 else if (block.InlineContent.Count > 0)
                 {
                     WriteInlineContentBlock(sb, block,
                         contentWidthPt, blockXPt, blockYPt,
                         fontSizePt, textAlign, fontIdx,
-                        marginLeftPt, marginTopPt, pageH, colorParser);
+                        marginLeftPt, marginTopPt, pageH, colorParser,
+                        page.PageNumber, totalPages);
                 }
             }
         }
@@ -483,45 +538,97 @@ public sealed class PdfWriter
     private void WriteSimpleTextBlock(StringBuilder sb, string text, InlineBox? decoInline,
         float contentWidthPt, float lineHeightPt, float blockXPt, float blockYPt,
         float fontSizePt, string? textAlign, string? fontFamily, bool bold, bool italic, int fontIdx,
-        CssDeclarationBlock? style, ColorParser colorParser)
+        CssDeclarationBlock? style, ColorParser colorParser,
+        int pageNumber = 1, int totalPages = 1)
     {
-        var lines = new List<string>();
-        if (contentWidthPt > 4f)
-        {
-            var words = text.Split(' ');
-            var curLine = new List<string>();
-            float curWidth = 0;
-            float spaceWidth = MeasureTextWidth(" ", fontFamily, bold, italic, fontSizePt);
+        // Page number token replacement
+        text = text.Replace("{PAGE_NUM}", pageNumber.ToString())
+                   .Replace("{PAGE_COUNT}", totalPages.ToString());
 
-            foreach (var word in words)
-            {
-                float wordWidth = MeasureTextWidth(word, fontFamily, bold, italic, fontSizePt);
-                if (curLine.Count > 0 && curWidth + spaceWidth + wordWidth > contentWidthPt)
-                {
-                    lines.Add(string.Join(" ", curLine));
-                    curLine.Clear();
-                    curWidth = 0;
-                }
-                if (curLine.Count > 0)
-                    curWidth += spaceWidth;
-                curLine.Add(word);
-                curWidth += wordWidth;
-            }
-            if (curLine.Count > 0)
-                lines.Add(string.Join(" ", curLine));
+        var lines = new List<string>();
+        string? whiteSpace = style?.GetPropertyValue("white-space");
+        bool isPre = whiteSpace is "pre";
+        bool isPreWrap = whiteSpace is "pre-wrap";
+        bool isPreLine = whiteSpace is "pre-line";
+        bool isNowrap = whiteSpace is "nowrap";
+
+        if (isPre)
+        {
+            // Preserve whitespace — split only on \n, no width-based wrapping
+            var rawLines = text.Split('\n');
+            foreach (var rawLine in rawLines)
+                lines.Add(rawLine);
         }
+        else if (isNowrap)
+        {
+            // Collapse whitespace, single line only
+            var collapsed = string.Join(" ", text.Split(' ', StringSplitOptions.RemoveEmptyEntries));
+            lines.Add(collapsed);
+        }
+        else if (isPreWrap)
+        {
+            // Preserve whitespace but wrap at content width
+            var rawLines = text.Split('\n');
+            foreach (var rawLine in rawLines)
+                WrapLine(rawLine, lines, contentWidthPt, fontFamily, bold, italic, fontSizePt, false);
+        }
+        else if (isPreLine)
+        {
+            // Collapse whitespace, wrap at content width, respect \n
+            var rawLines = text.Split('\n');
+            foreach (var rawLine in rawLines)
+            {
+                var collapsed = string.Join(" ", rawLine.Split(' ', StringSplitOptions.RemoveEmptyEntries));
+                if (!string.IsNullOrEmpty(collapsed))
+                    WrapLine(collapsed, lines, contentWidthPt, fontFamily, bold, italic, fontSizePt, false);
+                else
+                    lines.Add("");
+            }
+        }
+        else
+        {
+            // Normal: collapse whitespace, wrap at content width
+            if (contentWidthPt > 4f)
+            {
+                var collapsed = string.Join(" ", text.Split(' ', StringSplitOptions.RemoveEmptyEntries));
+                WrapLine(collapsed, lines, contentWidthPt, fontFamily, bold, italic, fontSizePt, true);
+            }
+            else
+            {
+                var collapsed = string.Join(" ", text.Split(' ', StringSplitOptions.RemoveEmptyEntries));
+                lines.Add(collapsed);
+            }
+        }
+
         if (lines.Count == 0)
             lines.Add(text);
 
         sb.Append("BT\n");
         sb.AppendLine($"{_fontEntries[fontIdx].FontKey} {fontSizePt:F2} Tf");
 
+        // CSS text-indent: apply to first line only
+        float textIndentPt = 0;
+        var indentVal = style?.GetPropertyValue("text-indent");
+        if (!string.IsNullOrWhiteSpace(indentVal))
+        {
+            if (indentVal.EndsWith("mm") && float.TryParse(indentVal[..^2], out var indentMm))
+                textIndentPt = indentMm * MmToPt;
+            else if (indentVal.EndsWith("pt") && float.TryParse(indentVal[..^2], out var indentPt))
+                textIndentPt = indentPt;
+            else if (indentVal.EndsWith("px") && float.TryParse(indentVal[..^2], out var indentPx))
+                textIndentPt = indentPx * 0.75f;
+            else if (indentVal.EndsWith("em") && float.TryParse(indentVal[..^2], out var indentEm))
+                textIndentPt = indentEm * fontSizePt;
+            else if (float.TryParse(indentVal, out var indentRaw))
+                textIndentPt = indentRaw * fontSizePt;
+        }
+
         for (int i = 0; i < lines.Count; i++)
         {
             string line = lines[i];
             float lineWidth = MeasureTextWidth(line, fontFamily, bold, italic, fontSizePt);
 
-            float lineOffsetX = 0;
+            float lineOffsetX = i == 0 ? textIndentPt : 0;
             float lineWordSpacing = 0;
 
             if (textAlign == "center")
@@ -615,8 +722,21 @@ public sealed class PdfWriter
     private void WriteInlineContentBlock(StringBuilder sb, BlockBox block,
         float contentWidthPt, float blockXPt, float blockYPt,
         float fontSizePt, string? textAlign, int fontIdx,
-        float marginLeftPt, float marginTopPt, float pageH, ColorParser colorParser)
+        float marginLeftPt, float marginTopPt, float pageH, ColorParser colorParser,
+        int pageNumber = 1, int totalPages = 1)
     {
+        // Page number token replacement in inline text
+        var pageNumStr = pageNumber.ToString();
+        var totalPagesStr = totalPages.ToString();
+        foreach (var inline in block.InlineContent)
+        {
+            if (inline.Type == InlineBoxType.Text && inline.Text != null)
+            {
+                inline.Text = inline.Text.Replace("{PAGE_NUM}", pageNumStr)
+                                         .Replace("{PAGE_COUNT}", totalPagesStr);
+            }
+        }
+
         float textOffsetX = 0;
         float extraWordSpacing = 0;
 
@@ -738,6 +858,86 @@ public sealed class PdfWriter
                 sb.AppendLine($"{inlineXPt:F2} {oy:F2} m {inlineXPt + inlineWidthPt:F2} {oy:F2} l S");
             }
         }
+    }
+
+    private void WrapLine(string text, List<string> lines, float contentWidthPt,
+        string? fontFamily, bool bold, bool italic, float fontSizePt, bool collapseSpaces)
+    {
+        var words = text.Split(' ', collapseSpaces ? StringSplitOptions.RemoveEmptyEntries : StringSplitOptions.None);
+        var curLine = new List<string>();
+        float curWidth = 0;
+        float spaceWidth = MeasureTextWidth(" ", fontFamily, bold, italic, fontSizePt);
+
+        foreach (var word in words)
+        {
+            float wordWidth = MeasureTextWidth(word, fontFamily, bold, italic, fontSizePt);
+            if (curLine.Count > 0 && curWidth + spaceWidth + wordWidth > contentWidthPt)
+            {
+                lines.Add(string.Join(" ", curLine));
+                curLine.Clear();
+                curWidth = 0;
+            }
+            if (curLine.Count > 0)
+                curWidth += spaceWidth;
+            curLine.Add(word);
+            curWidth += wordWidth;
+        }
+        if (curLine.Count > 0)
+            lines.Add(string.Join(" ", curLine));
+    }
+
+    private static float ParseBorderRadius(CssDeclarationBlock? style)
+    {
+        if (style == null) return 0;
+        var val = style.GetPropertyValue("border-radius");
+        if (string.IsNullOrWhiteSpace(val)) return 0;
+        val = val.Trim().ToLowerInvariant();
+        if (val.EndsWith("mm") && float.TryParse(val[..^2], out var mm)) return mm * MmToPt;
+        if (val.EndsWith("pt") && float.TryParse(val[..^2], out var pt)) return pt;
+        if (val.EndsWith("px") && float.TryParse(val[..^2], out var px)) return px * 0.75f;
+        if (val.EndsWith("em") && float.TryParse(val[..^2], out var em)) return em * 12f;
+        if (float.TryParse(val, out var raw)) return raw * MmToPt;
+        return 0;
+    }
+
+    private static void AppendRoundedRectPath(StringBuilder sb, float x, float y, float w, float h, float r, string op)
+    {
+        // Clamp radius to fit half the shorter side
+        float maxR = Math.Min(w, h) / 2f;
+        if (r > maxR) r = maxR;
+        if (r <= 0)
+        {
+            sb.AppendLine($"{x:F2} {y:F2} {w:F2} {h:F2} re {op}");
+            return;
+        }
+
+        const float k = 0.5522847498f;
+        float kR = k * r;
+
+        // Clockwise path starting at bottom edge (just after bottom-left corner)
+        sb.AppendLine($"{x + r:F2} {y:F2} m");
+        // Bottom edge
+        sb.AppendLine($"{x + w - r:F2} {y:F2} l");
+        // Bottom-right corner (quarter circle arc, center at x+w-r, y+r)
+        sb.AppendLine($"{x + w - r + kR:F2} {y:F2} {x + w:F2} {y + r - kR:F2} {x + w:F2} {y + r:F2} c");
+        // Right edge
+        sb.AppendLine($"{x + w:F2} {y + h - r:F2} l");
+        // Top-right corner (center at x+w-r, y+h-r)
+        sb.AppendLine($"{x + w:F2} {y + h - r + kR:F2} {x + w - r + kR:F2} {y + h:F2} {x + w - r:F2} {y + h:F2} c");
+        // Top edge
+        sb.AppendLine($"{x + r:F2} {y + h:F2} l");
+        // Top-left corner (center at x+r, y+h-r)
+        sb.AppendLine($"{x + r - kR:F2} {y + h:F2} {x:F2} {y + h - r + kR:F2} {x:F2} {y + h - r:F2} c");
+        // Left edge
+        sb.AppendLine($"{x:F2} {y + r:F2} l");
+        // Bottom-left corner (center at x+r, y+r)
+        sb.AppendLine($"{x:F2} {y + r - kR:F2} {x + r - kR:F2} {y:F2} {x + r:F2} {y:F2} c");
+
+        // Close and apply operator
+        if (op == "S")
+            sb.AppendLine("h S");
+        else
+            sb.AppendLine("h f");
     }
 
     private static bool ShouldShowHeaderFooter(int pageNumber, HeaderFooterBox hf)
