@@ -59,13 +59,14 @@ public sealed class BlockPlacer
         geometry.Width = ResolveWidth(box, containingBlock, geometry);
         geometry.Width = ClampToMinMax(geometry.Width, box.Style, containingBlock.Width,
             "min-width", "max-width", geometry, isWidth: true);
+        geometry.X = ApplyAutoMarginCentering(box, geometry, containingBlock, x);
 
         var contentWidth = geometry.Width - geometry.PaddingLeft - geometry.PaddingRight
             - geometry.BorderLeft - geometry.BorderRight;
         var childContainingBlock = new ContainingBlock(Math.Max(0, contentWidth), containingBlock.Height, containingBlock.HeightIsDefinite);
 
         var contentTop = y + geometry.PaddingTop + geometry.BorderTop;
-        var contentLeft = x + geometry.PaddingLeft + geometry.BorderLeft;
+        var contentLeft = geometry.X + geometry.PaddingLeft + geometry.BorderLeft;
         var cursorY = contentTop;
 
         if (box.Kind == LayoutBoxKind.Text)
@@ -185,6 +186,33 @@ public sealed class BlockPlacer
         }
 
         return borderBoxValue;
+    }
+
+    /// <summary>
+    /// CSS 2.1 10.3.3: for an in-flow block-level box, "margin-left"/"margin-right:
+    /// auto" absorb the extra space between the box's border-box width and its
+    /// containing block's width. Both auto -> centered (extra space split evenly);
+    /// only one auto -> that side absorbs all the extra space; neither auto ->
+    /// no shift (the box stays at its containing block's content-box origin, x).
+    /// Only applies to Block-kind boxes -- inline-level and inline-block boxes
+    /// don't participate in this rule.
+    /// </summary>
+    private static float ApplyAutoMarginCentering(LayoutBox box, BoxGeometry geometry, ContainingBlock containingBlock, float x)
+    {
+        if (box.Kind != LayoutBoxKind.Block) return x;
+
+        var marginLeftRaw = box.Style.GetPropertyValue("margin-left")?.Trim().ToLowerInvariant();
+        var marginRightRaw = box.Style.GetPropertyValue("margin-right")?.Trim().ToLowerInvariant();
+        bool leftAuto = marginLeftRaw == "auto";
+        bool rightAuto = marginRightRaw == "auto";
+        if (!leftAuto && !rightAuto) return x;
+
+        var extraSpace = containingBlock.Width - geometry.Width;
+        if (extraSpace <= 0) return x;
+
+        if (leftAuto && rightAuto) return x + extraSpace / 2f; // centered
+        if (leftAuto) return x + extraSpace; // margin-left absorbs everything, box hugs the right edge
+        return x; // margin-right absorbs everything, box stays at the left edge
     }
 
     private static bool IsInlineLevel(LayoutBox box) =>

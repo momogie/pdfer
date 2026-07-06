@@ -61,6 +61,10 @@ public class BoxTreePipelineFidelityTests : IAsyncLifetime
         the page but is capped by max-width.</div>
         </body></html>
         """)]
+    [InlineData("""
+        <html><body><div style="width:80mm;margin:0 auto;border:1px solid black">
+        This div is centered horizontally on the page via margin:0 auto.</div></body></html>
+        """)]
     public async Task BoxTreePipeline_SimpleDocument_ProducesComparableOutput(string html)
     {
         var pdfChromium = await _helper!.RenderHtmlViaChromiumAsync(html);

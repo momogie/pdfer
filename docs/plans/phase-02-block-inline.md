@@ -46,7 +46,15 @@ tak ada line box sungguhan.
       tidak diterapkan. Diverifikasi 9 unit test + harness fidelity
       (`min-width` mengalahkan `width` sempit, `max-width` membatasi fill-parent →
       **SSIM 0.9999** vs Chromium).
-- [ ] **Margin auto** untuk centering horizontal (`margin: 0 auto`) — belum dikerjakan.
+- [x] **Margin auto** untuk centering horizontal (`margin: 0 auto`) — `ApplyAutoMarginCentering`
+      di `BlockPlacer` (CSS 2.1 §10.3.3): kedua margin `auto` → centering (ruang ekstra
+      dibagi rata), satu sisi `auto` → sisi itu menyerap semua ruang ekstra, keduanya
+      bukan `auto` → tidak ada pergeseran. Hanya berlaku untuk box `Block` (bukan
+      inline-block, sesuai spec). Diverifikasi 6 unit test (kedua auto, kiri saja,
+      kanan saja, tanpa auto, children ikut bergeser relatif ke posisi baru — regression
+      guard penting karena `contentLeft` sebelumnya pakai `x` mentah bukan `geometry.X`
+      hasil shift, anak bisa salah posisi kalau lupa) + harness fidelity
+      (`div` `margin:0 auto` di halaman → **SSIM 0.9999** vs Chromium).
 
 ## Checklist — Inline formatting (IFC)
 
@@ -88,7 +96,7 @@ tak ada line box sungguhan.
 - Paragraf multi-baris membungkus di titik yang sama dengan Chrome (untuk font yang sama).
   ✅ diverifikasi (SSIM 0.9998 pada kasus wrap paksa).
 
-## Progres nyata (2 sesi)
+## Progres nyata (3 sesi)
 
 **Sesi 1**: `box-sizing` (content-box/border-box) dan `text-align` (left/right/center/
 justify) ditambahkan ke `BlockPlacer`. Keduanya diverifikasi dobel: unit test dengan
@@ -110,7 +118,17 @@ utama Fase 0 (streaming) **identik**, harness eksploratif box-tree (kasus
 min-width/max-width kombinasi) → **SSIM 0.9999** vs Chromium. Build solution penuh
 tanpa error.
 
-**Belum dikerjakan**: margin auto centering, vertical-align, line-height eksplisit
-dari CSS, inline-block sebagai atomic inline item sungguhan, white-space, text-indent,
-text-transform/text-decoration, overflow, margin collapsing parent/child. Fase 2
-berlanjut, jauh dari selesai.
+**Sesi 3**: `margin: 0 auto` centering horizontal via `ApplyAutoMarginCentering`.
+Perbaikan terkait: `contentLeft` di `Place` sebelumnya dihitung dari parameter `x`
+mentah, bukan `geometry.X` (yang sekarang bisa bergeser akibat centering) — diperbaiki
+supaya anak dari box yang di-center ikut bergeser relatif ke posisi baru, bukan
+posisi lama. 6 test baru (kedua margin auto, satu sisi saja x2, tanpa auto, children
+mengikuti shift, inline-block tidak ikut centering) — 271/271 `PdfEr.Core.Tests`
+stabil 3x run, 54 Infrastructure + 54 Integration tetap hijau, harness fidelity utama
+Fase 0 (streaming) **identik**, harness eksploratif box-tree (div `margin:0 auto`) →
+**SSIM 0.9999** vs Chromium. Build solution penuh tanpa error.
+
+**Belum dikerjakan**: vertical-align, line-height eksplisit dari CSS, inline-block
+sebagai atomic inline item sungguhan, white-space, text-indent, text-transform/
+text-decoration, overflow, margin collapsing parent/child. Fase 2 berlanjut, jauh
+dari selesai.

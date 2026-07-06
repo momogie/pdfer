@@ -386,6 +386,102 @@ public class BlockPlacerTests
     }
 
     [Fact]
+    public void Place_MarginAutoBothSides_CentersBoxHorizontally()
+    {
+        var decl = new CssDeclarationBlock();
+        decl.SetProperty("width", "50mm");
+        decl.SetProperty("margin-left", "auto");
+        decl.SetProperty("margin-right", "auto");
+        var box = Block(decl);
+
+        var placer = new BlockPlacer();
+        placer.Place(box, new ContainingBlock(150, 0, false), 10, 0);
+
+        // Extra space = 150 - 50 = 100mm, split evenly = 50mm each side.
+        Assert.Equal(60, box.Geometry.X, 3); // 10 (start x) + 50
+    }
+
+    [Fact]
+    public void Place_MarginAutoLeftOnly_PushesBoxToRightEdge()
+    {
+        var decl = new CssDeclarationBlock();
+        decl.SetProperty("width", "50mm");
+        decl.SetProperty("margin-left", "auto");
+        var box = Block(decl);
+
+        var placer = new BlockPlacer();
+        placer.Place(box, new ContainingBlock(150, 0, false), 0, 0);
+
+        Assert.Equal(100, box.Geometry.X, 3); // 150 - 50 all absorbed by margin-left
+    }
+
+    [Fact]
+    public void Place_MarginAutoRightOnly_StaysAtLeftEdge()
+    {
+        var decl = new CssDeclarationBlock();
+        decl.SetProperty("width", "50mm");
+        decl.SetProperty("margin-right", "auto");
+        var box = Block(decl);
+
+        var placer = new BlockPlacer();
+        placer.Place(box, new ContainingBlock(150, 0, false), 0, 0);
+
+        Assert.Equal(0, box.Geometry.X, 3);
+    }
+
+    [Fact]
+    public void Place_NoAutoMargins_NoCentering()
+    {
+        var decl = new CssDeclarationBlock();
+        decl.SetProperty("width", "50mm");
+        var box = Block(decl);
+
+        var placer = new BlockPlacer();
+        placer.Place(box, new ContainingBlock(150, 0, false), 5, 0);
+
+        Assert.Equal(5, box.Geometry.X, 3);
+    }
+
+    [Fact]
+    public void Place_MarginAutoCentering_ChildrenPositionedRelativeToShiftedBox()
+    {
+        // Regression guard: children must be placed relative to the box's
+        // final (centered) X, not its pre-centering starting X.
+        var childDecl = new CssDeclarationBlock();
+        childDecl.SetProperty("height", "5mm");
+        var child = Block(childDecl);
+
+        var decl = new CssDeclarationBlock();
+        decl.SetProperty("width", "50mm");
+        decl.SetProperty("margin-left", "auto");
+        decl.SetProperty("margin-right", "auto");
+        var box = Block(decl, child);
+
+        var placer = new BlockPlacer();
+        placer.Place(box, new ContainingBlock(150, 0, false), 0, 0);
+
+        Assert.Equal(50, box.Geometry.X, 3); // (150-50)/2
+        Assert.Equal(50, child.Geometry.X, 3); // child starts at parent's centered content-left
+    }
+
+    [Fact]
+    public void Place_MarginAuto_InlineBlockDoesNotCenter()
+    {
+        // Auto-margin centering (CSS2.1 10.3.3) only applies to block-level
+        // boxes, not inline-block.
+        var decl = new CssDeclarationBlock();
+        decl.SetProperty("width", "50mm");
+        decl.SetProperty("margin-left", "auto");
+        decl.SetProperty("margin-right", "auto");
+        var box = new LayoutBox { Kind = LayoutBoxKind.InlineBlock, Style = ComputedStyle.Resolve(decl) };
+
+        var placer = new BlockPlacer();
+        placer.Place(box, new ContainingBlock(150, 0, false), 10, 0);
+
+        Assert.Equal(10, box.Geometry.X, 3);
+    }
+
+    [Fact]
     public void Place_WidthAsPercent_ResolvesAgainstContainingBlock()
     {
         var decl = new CssDeclarationBlock();
