@@ -103,8 +103,17 @@ Konsep first-class yang diperkenalkan (mengganti kursor global):
 - [x] Objek **ContainingBlock** (struct, `Width`/`Height`/`HeightIsDefinite`) dan enum
       **FormattingContextKind** (Block/Inline/Flex/Grid/Table) sebagai penanda — keduanya
       tipe data saja, **belum dipakai** untuk resolusi `%` atau pemisahan BFC/IFC nyata.
-- [ ] Adapter **paint**: box tree → `BlockBox`/`InlineBox` lama. Belum dikerjakan — tidak
-      relevan sampai ada Pass 1/2 yang menghasilkan geometri box tree untuk diadaptasi.
+- [x] Adapter **paint**: `BoxTreePaintAdapter` di
+      [BoxTreePaintAdapter.cs](../../src/PdfEr.Core/Application/HtmlProcessing/BoxTreePaintAdapter.cs)
+      menerjemahkan `LayoutBox` (geometri sudah diisi `BlockPlacer`) → `BlockBox`/`InlineBox`
+      lama, field-per-field (X/Y/Width/Height/Padding/Border/Margin, `ComputedStyle`).
+      Text/Inline/Anonymous box **tidak** jadi `BlockBox` bersarang — diratakan jadi
+      `InlineBox` di `InlineContent` milik `BlockBox` leluhur terdekat, sesuai model lama
+      yang menyimpan inline content sebagai list datar, bukan pohon. **Belum dipakai
+      di mana pun** — `PdfWriter`/`PdfConverterService` belum tahu box-tree pipeline ada;
+      ini baru fungsi konversi yang teruji berdiri sendiri. Ini juga berarti **belum ada**
+      jalur box-tree → PDF byte sungguhan untuk dibandingkan lewat fidelity harness (Fase 0)
+      — masih perlu disatukan dengan `PdfConverterService`/`UseBoxTreeLayout` dulu.
 - [x] **Feature flag** `UseBoxTreeLayout` ditambahkan di `PdfConverterConfiguration`
       (default `false`). **Belum ada percabangan** yang membacanya di `PdfConverterService`
       atau `LayoutEngine` — flag ada tapi belum "hidup".
@@ -115,7 +124,7 @@ Konsep first-class yang diperkenalkan (mengganti kursor global):
       coupling dua arah antar proyek Domain/Application saat ini — perlu disatukan saat
       `IUnitConverter` dibereskan.
 
-## Progres nyata (5 sesi — bukan Fase 1 selesai, lihat status per item di atas)
+## Progres nyata (6 sesi — bukan Fase 1 selesai, lihat status per item di atas)
 
 **Sesi 1**: tipe data box-tree tambahan (`LayoutBox`, `ComputedStyle`, dll.), tanpa
 mengubah pipeline streaming. Ditemukan & diperbaiki bug race-condition di `CssMerger`
@@ -156,13 +165,24 @@ ke parent) menambah total jadi 16 test `BlockPlacerTests`. Diverifikasi: 203/203
 `PdfEr.Core.Tests` stabil 3x run, 54 Infrastructure + 46 Integration tetap hijau,
 build solution penuh tanpa error. Tidak menyentuh `LayoutEngine`/`PdfConverterService`.
 
+**Sesi 6**: `BoxTreePaintAdapter` — konversi `LayoutBox` (setelah `BlockPlacer`) →
+`BlockBox`/`InlineBox` lama, sehingga `PdfWriter` yang sudah ada bisa (nanti) menerima
+output box-tree tanpa perubahan. 6 test baru `BoxTreePaintAdapterTests` (copy geometri,
+nested block, text→inline flattening, anonymous-block flattening ke leluhur, computed
+style passthrough, urutan children). Diverifikasi: 209/209 `PdfEr.Core.Tests` stabil 3x
+run, 54 Infrastructure + 46 Integration tetap hijau, build solution penuh tanpa error.
+Tidak menyentuh `LayoutEngine`/`PdfConverterService`/`PdfWriter`.
+
 **Belum dikerjakan (sengaja, untuk sesi terpisah)**: margin collapsing parent/first-child,
 parent/last-child, dan empty-block self-collapsing; Inline Formatting Context sungguhan
 (line box asli, bukan placeholder satu-baris); placement khusus untuk
-float/position/table/flex/grid; migrasi tag handler; adapter paint box-tree →
-`BlockBox`/`InlineBox` lama. Fase 1 tetap XL; lima slice sejauh ini baru menghasilkan
-geometri untuk kasus block-formatting-context yang paling umum — belum ada jalur yang
-menyambungkan box-tree pipeline ke PDF output sama sekali.
+float/position/table/flex/grid; migrasi tag handler; **menyambungkan pipeline** (memanggil
+`BoxTreeBuilder` → `IntrinsicSizeCalculator` → `BlockPlacer` → `BoxTreePaintAdapter` dari
+`PdfConverterService` di belakang flag `UseBoxTreeLayout`, lalu membandingkan hasilnya
+lewat fidelity harness Fase 0). Fase 1 tetap XL; enam slice sejauh ini punya semua
+komponen individual teruji, tapi **belum ada satu baris kode pun yang benar-benar
+memanggil pipeline box-tree secara end-to-end** — itu langkah besar berikutnya, dan
+baru di situ box-tree pipeline bisa menghasilkan PDF sungguhan untuk dibandingkan.
 
 ## Migrasi tag handler
 
