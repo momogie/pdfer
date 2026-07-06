@@ -174,7 +174,7 @@ public partial class PdfWriter
                 lineOffsetX = Math.Max(0, (contentWidthPt - lineWidth) / 2);
             else if (textAlign == "right")
                 lineOffsetX = Math.Max(0, contentWidthPt - lineWidth);
-            else if (textAlign == "justify" && (i < lines.Count - 1 || lines.Count == 1) && line.Contains(' '))
+            else if (textAlign == "justify" && i < lines.Count - 1 && line.Contains(' '))
             {
                 int wc = line.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
                 if (wc > 1)
@@ -290,7 +290,7 @@ public partial class PdfWriter
 
     private void WriteInlineContentBlock(StringBuilder sb, BlockBox block,
         float contentWidthPt, float blockXPt, float blockYPt,
-        float fontSizePt, string? textAlign, int fontIdx,
+        float fontSizePt, string? textAlign, string? fontFamily, bool bold, bool italic, int fontIdx,
         float marginLeftPt, float marginTopPt, float pageH, ColorParser colorParser,
         int pageNumber = 1, int totalPages = 1)
     {
@@ -316,7 +316,7 @@ public partial class PdfWriter
             {
                 if (inline.Type == InlineBoxType.Text && inline.Text != null)
                 {
-                    textWidthPt += inline.Text.Length * fontSizePt * 0.5f;
+                    textWidthPt += MeasureTextWidth(inline.Text, fontFamily, bold, italic, fontSizePt);
                     wordCount += inline.Text.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
                 }
             }
@@ -368,7 +368,11 @@ public partial class PdfWriter
         foreach (var inline in block.InlineContent)
         {
             if (inline.Type == InlineBoxType.Text && inline.Text != null)
+            {
+                if (fontIdx >= 0 && fontIdx < _fontEntries.Count)
+                    RecordUsedChars(_fontEntries[fontIdx].FamilyName, inline.Text);
                 sb.AppendLine($"{FormatPdfText(inline.Text)} Tj");
+            }
         }
 
         sb.Append("ET\n");
@@ -391,7 +395,7 @@ public partial class PdfWriter
 
             float inlineXPt = inline.X * MmToPt + marginLeftPt;
             float inlineYPt = pageH - (inline.Y * MmToPt) - marginTopPt;
-            float inlineWidthPt = inline.Text.Length * fontSizePt * 0.5f;
+            float inlineWidthPt = MeasureTextWidth(inline.Text, fontFamily, bold, italic, fontSizePt);
 
             string? decoColorStr = null;
             if (inlineStyle != null)
@@ -429,27 +433,70 @@ public partial class PdfWriter
     private void WrapLine(string text, List<string> lines, float contentWidthPt,
         string? fontFamily, bool bold, bool italic, float fontSizePt, bool collapseSpaces)
     {
-        var words = text.Split(' ', collapseSpaces ? StringSplitOptions.RemoveEmptyEntries : StringSplitOptions.None);
-        var curLine = new List<string>();
-        float curWidth = 0;
-        float spaceWidth = MeasureTextWidth(" ", fontFamily, bold, italic, fontSizePt);
+        // Get UAX#14 break opportunities
+        var breaks = Typography.Uax14LineBreaker.GetBreakOpportunities(text);
 
-        foreach (var word in words)
+        var curSegments = new List<(string text, float width)>();
+        float curWidth = 0;
+        int segStart = 0;
+
+        for (int bIdx = 1; bIdx < breaks.Count; bIdx++)
         {
-            float wordWidth = MeasureTextWidth(word, fontFamily, bold, italic, fontSizePt);
-            if (curLine.Count > 0 && curWidth + spaceWidth + wordWidth > contentWidthPt)
+            int breakPos = breaks[bIdx];
+            int prevBreak = breaks[bIdx - 1];
+
+            // Segment from prevBreak to breakPos (can be empty for consecutive breaks)
+            if (breakPos <= prevBreak) continue;
+
+            string segment = text[prevBreak..breakPos];
+
+            // Collapse spaces: skip segments that are only spaces when collapseSpaces
+            bool isSpaceSegment = segment.All(c => c == ' ' || c == '\t');
+            if (isSpaceSegment && collapseSpaces)
+                continue;
+
+            float segWidth = MeasureTextWidth(segment, fontFamily, bold, italic, fontSizePt);
+
+            // Check if this segment fits on current line
+            if (curSegments.Count > 0 && curWidth + segWidth > contentWidthPt)
             {
-                lines.Add(string.Join(" ", curLine));
-                curLine.Clear();
+                // Emit current line
+                var lineText = string.Concat(curSegments.Select(s => s.text));
+                lines.Add(lineText);
+                curSegments.Clear();
                 curWidth = 0;
             }
-            if (curLine.Count > 0)
-                curWidth += spaceWidth;
-            curLine.Add(word);
-            curWidth += wordWidth;
+
+            curSegments.Add((segment, segWidth));
+            curWidth += segWidth;
+            segStart = breakPos;
         }
-        if (curLine.Count > 0)
-            lines.Add(string.Join(" ", curLine));
+
+        // Handle remaining text after last break
+        if (segStart < text.Length)
+        {
+            string remainder = text[segStart..];
+            float remWidth = MeasureTextWidth(remainder, fontFamily, bold, italic, fontSizePt);
+
+            if (curSegments.Count > 0 && curWidth + remWidth > contentWidthPt)
+            {
+                var lineText = string.Concat(curSegments.Select(s => s.text));
+                lines.Add(lineText);
+                curSegments.Clear();
+                curWidth = 0;
+            }
+            curSegments.Add((remainder, remWidth));
+        }
+
+        if (curSegments.Count > 0)
+        {
+            var finalText = string.Concat(curSegments.Select(s => s.text));
+            lines.Add(finalText);
+        }
+
+        // If no breaks produced at least one line, add original text as single line
+        if (lines.Count == 0 && !string.IsNullOrEmpty(text))
+            lines.Add(text);
     }
 
     private static float ParseBorderRadius(CssDeclarationBlock? style)

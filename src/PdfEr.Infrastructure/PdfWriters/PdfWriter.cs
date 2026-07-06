@@ -474,6 +474,12 @@ public partial class PdfWriter
                 _buffer.AppendLine("   /FirstChar 32");
                 _buffer.AppendLine("   /LastChar 255");
                 _buffer.AppendLine("   /Encoding /WinAnsiEncoding");
+
+                // ToUnicode CMap for text extraction/search
+                var toUnicodeNum = WriteToUnicodeCmap(entry.FamilyName);
+                if (toUnicodeNum.HasValue)
+                    _buffer.AppendLine($"   /ToUnicode {toUnicodeNum.Value} 0 R");
+
                 _buffer.AppendLine(">>");
                 _buffer.AppendLine("endobj");
 
@@ -505,7 +511,13 @@ public partial class PdfWriter
                 var num = AllocateObjectNumber();
                 RecordObjectOffset(num);
                 _buffer.AppendLine($"{num} 0 obj");
-                _buffer.AppendLine($"<< /Type /Font /Subtype /Type1 /BaseFont /{baseFont} >>");
+                _buffer.AppendLine($"<< /Type /Font /Subtype /Type1 /BaseFont /{baseFont}");
+
+                var toUnicodeNum = WriteToUnicodeCmap(entry.FamilyName);
+                if (toUnicodeNum.HasValue)
+                    _buffer.AppendLine($"   /ToUnicode {toUnicodeNum.Value} 0 R");
+
+                _buffer.AppendLine(">>");
                 _buffer.AppendLine("endobj");
                 objNums.Add(num);
 
@@ -532,6 +544,50 @@ public partial class PdfWriter
         _buffer.AppendLine("endobj");
         _fontObjects["Helvetica"] = num;
         return num;
+    }
+
+    private int? WriteToUnicodeCmap(string fontName)
+    {
+        if (!_fontUsedChars.TryGetValue(fontName, out var usedChars) || usedChars.Count == 0)
+            return null;
+
+        var cmapBuilder = new System.Text.StringBuilder();
+        cmapBuilder.AppendLine("/CIDInit /ProcSet findresource begin");
+        cmapBuilder.AppendLine("12 dict begin");
+        cmapBuilder.AppendLine("begincmap");
+        cmapBuilder.AppendLine("/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def");
+        cmapBuilder.AppendLine("/CMapName /Adobe-Identity-UCS def");
+        cmapBuilder.AppendLine("/CMapType 2 def");
+        cmapBuilder.AppendLine("1 begincodespacerange");
+        cmapBuilder.AppendLine("<00> <FF>");
+        cmapBuilder.AppendLine("endcodespacerange");
+        cmapBuilder.AppendLine($"{usedChars.Count} beginbfchar");
+
+        int code = 32;
+        foreach (var ch in usedChars.OrderBy(c => c))
+        {
+            cmapBuilder.AppendLine($"<{code:X2}> <{ch:X4}>");
+            code++;
+            if (code > 255) break;
+        }
+
+        cmapBuilder.AppendLine("endbfchar");
+        cmapBuilder.AppendLine("endcmap");
+        cmapBuilder.AppendLine("CMapName currentdict /CMap defineresource pop");
+        cmapBuilder.AppendLine("end");
+        cmapBuilder.AppendLine("end");
+
+        var cmapBytes = Encoding.ASCII.GetBytes(cmapBuilder.ToString());
+        var toUnicodeNum = AllocateObjectNumber();
+        RecordObjectOffset(toUnicodeNum);
+        _buffer.AppendLine($"{toUnicodeNum} 0 obj");
+        _buffer.AppendLine($"<< /Length {cmapBytes.Length} >>");
+        _buffer.AppendLine("stream");
+        _buffer.Append(cmapBytes);
+        _buffer.AppendLine("endstream");
+        _buffer.AppendLine("endobj");
+
+        return toUnicodeNum;
     }
 
     public int WriteEmbeddedFont(string fontName, byte[]? fontData = null)

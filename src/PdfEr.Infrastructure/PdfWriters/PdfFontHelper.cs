@@ -89,8 +89,16 @@ public partial class PdfWriter
 
         float total = 0;
         foreach (char c in text)
-            total += metrics.AdvanceWidths.TryGetValue(c, out var w) ? w : metrics.AdvanceWidths.GetValueOrDefault('n', fontSizePt * 0.5f);
+            total += GetCharAdvance(metrics, c);
         return total;
+    }
+
+    private static float GetCharAdvance(FontMetrics metrics, char c)
+    {
+        if (metrics.AdvanceWidths.TryGetValue(c, out var w))
+            return w;
+
+        return metrics.SizePoints * 0.5f;
     }
 
     private static float GetLineHeight(CssDeclarationBlock? style, float defaultFactor)

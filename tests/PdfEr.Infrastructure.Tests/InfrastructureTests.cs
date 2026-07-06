@@ -799,8 +799,8 @@ public sealed class PdfWriterWriteDocumentLayoutTests
         page.Blocks.Add(new BlockBox
         {
             TagName = "p",
-            X = 15, Y = 20, Width = 180, Height = 20,
-            TextContent = "This is justified text with several words",
+            X = 15, Y = 20, Width = 60, Height = 40,
+            TextContent = "This is justified text with several words that should wrap into multiple lines",
             PaddingLeft = 1, PaddingRight = 1,
             ComputedStyle = style
         });

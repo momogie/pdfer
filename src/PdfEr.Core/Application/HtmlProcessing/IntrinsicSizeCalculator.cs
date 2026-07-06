@@ -49,15 +49,15 @@ public sealed class IntrinsicSizeCalculator
         var fontStyle = ResolveFontStyle(box.Style);
         var metrics = _fontRegistry.GetMetrics(fontFamily, fontStyle, box.Style.FontSizePt);
 
-        // No metrics available (unregistered font): fall back to the same
-        // heuristic the streaming pipeline already uses elsewhere, converted
-        // to mm, rather than silently returning zero-width intrinsic sizes.
+        // No metrics available (unregistered font): fall back to estimated
+        // widths rather than silently returning zero-width intrinsic sizes.
+        var fontSizeMm = box.Style.FontSizeMm;
         if (metrics == null)
         {
-            var approx = text.Length * box.Style.FontSizeMm * 0.5f;
+            var approx = text.Length * fontSizeMm * 0.5f;
             var longestWordApprox = text.Split(' ', '\t', '\n')
                 .Where(w => w.Length > 0)
-                .Select(w => w.Length * box.Style.FontSizeMm * 0.5f)
+                .Select(w => w.Length * fontSizeMm * 0.5f)
                 .DefaultIfEmpty(0)
                 .Max();
             return new IntrinsicSizes(longestWordApprox, approx);
@@ -140,8 +140,12 @@ public sealed class IntrinsicSizeCalculator
         return (paddingLeft + paddingRight + borderLeft + borderRight, marginLeft + marginRight);
     }
 
-    private static float GetAdvanceWidth(FontMetrics metrics, char c) =>
-        metrics.AdvanceWidths.TryGetValue(c, out var w) ? w : metrics.AdvanceWidths.GetValueOrDefault('n', 6f);
+    private static float GetAdvanceWidth(FontMetrics metrics, char c)
+    {
+        if (metrics.AdvanceWidths.TryGetValue(c, out var w))
+            return w;
+        return metrics.SizePoints * 0.5f;
+    }
 
     private static FontStyle ResolveFontStyle(ComputedStyle style)
     {

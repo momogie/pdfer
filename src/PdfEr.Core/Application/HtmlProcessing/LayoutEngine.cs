@@ -2,6 +2,7 @@ using PdfEr.Core.Application.Interfaces;
 using PdfEr.Core.Domain.Enums;
 using PdfEr.Core.Domain.Layout;
 using PdfEr.Core.Domain.Styles;
+using PdfEr.Core.Domain.Typography;
 using PdfEr.Core.Domain.ValueObjects;
 
 namespace PdfEr.Core.Application.HtmlProcessing;
@@ -11,6 +12,7 @@ public sealed class LayoutEngine
     private readonly CssMerger _cssMerger;
     private readonly CssNormalizer _cssNormalizer;
     private readonly IUnitConverter _unitConverter;
+    private readonly IFontRegistry? _fontRegistry;
 
     private DocumentLayout _document = null!;
     private PageLayout _currentPage = null!;
@@ -26,11 +28,12 @@ public sealed class LayoutEngine
     private float _flexRowMaxHeight;
     private int _gridColumnIndex;
 
-    public LayoutEngine(CssMerger cssMerger, CssNormalizer cssNormalizer, IUnitConverter unitConverter)
+    public LayoutEngine(CssMerger cssMerger, CssNormalizer cssNormalizer, IUnitConverter unitConverter, IFontRegistry? fontRegistry = null)
     {
         _cssMerger = cssMerger;
         _cssNormalizer = cssNormalizer;
         _unitConverter = unitConverter;
+        _fontRegistry = fontRegistry;
     }
 
     public DocumentLayout CreateDocumentLayout(PdfConverterConfiguration config)
@@ -269,8 +272,9 @@ public sealed class LayoutEngine
                 var cssWidth = box.ComputedStyle?.GetPropertyValue("width");
                 if (string.IsNullOrWhiteSpace(cssWidth) || cssWidth == "auto")
                 {
-                    int textLen = box.TextContent?.Length ?? (box.InlineContent.Count > 0 ? 1 : 0);
-                    box.Width = Math.Max(textLen * fontSize * 0.5f, fontSize) + box.PaddingLeft + box.PaddingRight + box.BorderLeft + box.BorderRight;
+                    float textWidth = EstimateTextWidthMm(box.TextContent, box.ComputedStyle, fontSize);
+                    float minWidth = fontSize + box.PaddingLeft + box.PaddingRight + box.BorderLeft + box.BorderRight;
+                    box.Width = Math.Max(textWidth, minWidth);
                 }
 
                 // Check if we need to wrap to next line
@@ -477,13 +481,14 @@ public sealed class LayoutEngine
     public void LayoutInlineContent(BlockBox container, string text)
     {
         var fontSize = GetFontSize(container.ComputedStyle);
+        float textWidth = EstimateTextWidthMm(text, container.ComputedStyle, fontSize);
         var inlineBox = new InlineBox
         {
             Text = text,
             Type = InlineBoxType.Text,
             X = container.X + container.PaddingLeft + container.BorderLeft,
             Y = container.Y + container.PaddingTop,
-            Width = text.Length * fontSize * 0.5f,
+            Width = textWidth,
             Height = fontSize * 1.3f,
             ComputedStyle = container.ComputedStyle
         };
@@ -720,5 +725,51 @@ public sealed class LayoutEngine
             "larger" => 12f,
             _ => 10f
         };
+    }
+
+    private float EstimateTextWidthMm(string? text, CssDeclarationBlock? style, float fontSizeMm)
+    {
+        if (string.IsNullOrEmpty(text))
+            return 0;
+
+        if (_fontRegistry == null)
+            return text.Length * fontSizeMm * 0.5f;
+
+        var fontFamily = style?.GetPropertyValue("font-family") ?? "sans-serif";
+        var fontSizePt = GetFontSizePt(style);
+        var (bold, italic) = ResolveFontStyleFlags(style);
+        var fs = (bold, italic) switch
+        {
+            (true, true) => FontStyle.BoldItalic,
+            (true, false) => FontStyle.Bold,
+            (false, true) => FontStyle.Italic,
+            (false, false) => FontStyle.Regular
+        };
+
+        var metrics = _fontRegistry.GetMetrics(fontFamily, fs, fontSizePt);
+        if (metrics == null)
+            return text.Length * fontSizeMm * 0.5f;
+
+        float totalPt = 0;
+        foreach (char c in text)
+        {
+            if (metrics.AdvanceWidths.TryGetValue(c, out var w))
+                totalPt += w;
+            else
+                totalPt += metrics.SizePoints * 0.5f;
+        }
+
+        return totalPt * PtToMm;
+    }
+
+    private static (bool bold, bool italic) ResolveFontStyleFlags(CssDeclarationBlock? style)
+    {
+        if (style == null) return (false, false);
+        var weight = style.GetPropertyValue("font-weight");
+        var fontStyle = style.GetPropertyValue("font-style");
+        bool bold = weight is "bold" or "700" or "800" or "900" ||
+            (weight != null && int.TryParse(weight, out var w) && w >= 700);
+        bool italic = fontStyle is "italic" or "oblique";
+        return (bold, italic);
     }
 }

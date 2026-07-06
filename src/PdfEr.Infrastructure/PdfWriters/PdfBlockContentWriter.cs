@@ -351,7 +351,7 @@ public partial class PdfWriter
                 {
                     WriteInlineContentBlock(sb, block,
                         contentWidthPt, blockXPt, blockYPt,
-                        fontSizePt, textAlign, fontIdx,
+                        fontSizePt, textAlign, fontFamily, bold, italic, fontIdx,
                         marginLeftPt, marginTopPt, pageH, colorParser,
                         page.PageNumber, totalPages);
                 }

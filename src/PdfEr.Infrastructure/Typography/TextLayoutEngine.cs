@@ -53,12 +53,16 @@ public sealed class TextLayoutEngine : ITextLayoutEngine
 
             float spaceWidth = GetAdvanceWidth(metrics, ' ');
 
+            // Pre-compute UAX#14 break opportunities for this run's text
+            var runBreaks = new HashSet<int>(Uax14LineBreaker.GetBreakOpportunities(run.Text));
+
             for (int i = 0; i < run.Text.Length; i++)
             {
                 char c = run.Text[i];
                 float charWidth = GetAdvanceWidth(metrics, c);
 
-                if (c == '\n')
+                // Mandatory line breaks (BK/LF/CR/NL)
+                if (c == '\n' || c == '\r')
                 {
                     FlushWordBuffer(wordBuffer, currentLine, ref currentX, ref maxLineHeight);
                     finalizeLine(currentLine, result, ref currentY, ref currentX, ref maxLineHeight, maxWidth);
@@ -66,12 +70,48 @@ public sealed class TextLayoutEngine : ITextLayoutEngine
                     continue;
                 }
 
+                // UAX#14 break opportunity: flush accumulated word buffer,
+                // then handle the break character itself.
+                // Break at position i means break is allowed BEFORE char i.
+                // We check AFTER processing the character at i-1 and BEFORE
+                // processing char i — i.e., when we're at position i, check
+                // if a break is allowed after position i-1 (i.e., break pos i).
+                if (runBreaks.Contains(i) && wordBuffer.Count > 0)
+                {
+                    FlushWordBuffer(wordBuffer, currentLine, ref currentX, ref maxLineHeight);
+
+                    // If this position is also a space/tab, treat as normal space
+                    if (c == ' ' || c == '\t')
+                    {
+                        float breakWidth = spaceWidth;
+                        if (currentX + breakWidth > maxWidth && currentLine.Runs.Count > 0)
+                        {
+                            finalizeLine(currentLine, result, ref currentY, ref currentX, ref maxLineHeight, maxWidth);
+                        }
+
+                        currentLine.Runs.Add(new TextRun
+                        {
+                            Text = " ",
+                            Font = run.Font,
+                            SizePoints = run.SizePoints,
+                            Bold = run.Bold,
+                            Italic = run.Italic,
+                            Color = run.Color
+                        });
+                        currentX += breakWidth;
+                        maxLineHeight = Math.Max(maxLineHeight, metrics.LineHeight);
+                        continue;
+                    }
+                }
+
+                // For spaces at non-break positions (shouldn't normally happen),
+                // flush and add the space run
                 if (c == ' ' || c == '\t')
                 {
                     FlushWordBuffer(wordBuffer, currentLine, ref currentX, ref maxLineHeight);
 
-                    float wordWidth = spaceWidth;
-                    if (currentX + wordWidth > maxWidth && currentLine.Runs.Count > 0)
+                    float breakWidth = spaceWidth;
+                    if (currentX + breakWidth > maxWidth && currentLine.Runs.Count > 0)
                     {
                         finalizeLine(currentLine, result, ref currentY, ref currentX, ref maxLineHeight, maxWidth);
                     }
@@ -85,7 +125,7 @@ public sealed class TextLayoutEngine : ITextLayoutEngine
                         Italic = run.Italic,
                         Color = run.Color
                     });
-                    currentX += wordWidth;
+                    currentX += breakWidth;
                     maxLineHeight = Math.Max(maxLineHeight, metrics.LineHeight);
                     continue;
                 }
@@ -150,7 +190,7 @@ public sealed class TextLayoutEngine : ITextLayoutEngine
         maxHeight = 0;
     }
 
-    private static void finalizeAlignedX(TextLine line, float maxWidth)
+    private void finalizeAlignedX(TextLine line, float maxWidth)
     {
         if (line.Alignment == TextAlignment.Left) return;
 
@@ -167,11 +207,16 @@ public sealed class TextLayoutEngine : ITextLayoutEngine
         line.Width = totalWidth;
     }
 
-    private static float MeasureRunWidth(TextRun run)
+    private float MeasureRunWidth(TextRun run)
     {
+        var metrics = _fontRegistry.GetMetrics(run.Font.FamilyName,
+            run.Font.Style, run.SizePoints);
+        if (metrics == null)
+            return run.Text.Length * run.SizePoints * 0.5f;
+
         float w = 0;
         foreach (char c in run.Text)
-            w += run.Font.SizePoints * 0.5f;
+            w += GetAdvanceWidth(metrics, c);
         return w;
     }
 
@@ -200,7 +245,9 @@ public sealed class TextLayoutEngine : ITextLayoutEngine
 
     private static float GetAdvanceWidth(FontMetrics metrics, char c)
     {
-        return metrics.AdvanceWidths.TryGetValue(c, out var w) ? w : metrics.AdvanceWidths.GetValueOrDefault('n', 6f);
+        if (metrics.AdvanceWidths.TryGetValue(c, out var w))
+            return w;
+        return metrics.SizePoints * 0.5f;
     }
 
     private static FontStyle ConvertStyle(bool bold, bool italic)

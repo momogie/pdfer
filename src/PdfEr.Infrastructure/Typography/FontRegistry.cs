@@ -9,6 +9,8 @@ public sealed class FontRegistry : IFontRegistry, IDisposable
 {
     private readonly ConcurrentDictionary<string, FontMetrics> _metricsCache = new();
     private readonly Dictionary<string, FontDefinition> _loadedFonts = new(StringComparer.OrdinalIgnoreCase);
+    private readonly SixLabors.Fonts.FontCollection _fontCollection = new();
+    private readonly Dictionary<string, SixLabors.Fonts.FontFamily> _loadedFamilies = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _searchedDirectories = new();
     private readonly string[] _searchDirectories;
     private readonly ILogger<FontRegistry> _logger;
@@ -100,7 +102,16 @@ public sealed class FontRegistry : IFontRegistry, IDisposable
             fontDef = new FontDefinition { FamilyName = "Helvetica", Style = FontStyle.Regular };
         }
 
-        var metrics = EstimateMetrics(fontDef, sizePoints);
+        // Try to get real metrics via SixLabors.Fonts
+        var resolvedFamily = fontDef.FamilyName;
+        var metrics = TryBuildMetricsFromSixLabors(resolvedFamily, style, sizePoints);
+
+        if (metrics == null)
+        {
+            _logger.LogDebug("SixLabors metrics unavailable for {Family}, using estimation", resolvedFamily);
+            metrics = EstimateMetrics(fontDef, sizePoints);
+        }
+
         _metricsCache.TryAdd(cacheKey, metrics);
         return metrics;
     }
@@ -122,6 +133,23 @@ public sealed class FontRegistry : IFontRegistry, IDisposable
             FontData = fontData,
             IsEmbedded = true
         };
+
+        // Also load into SixLabors FontCollection for real metrics
+        try
+        {
+            using var ms = new MemoryStream(fontData);
+            var sixFamily = _fontCollection.Add(ms);
+            var realName = sixFamily.Name;
+            if (!string.IsNullOrEmpty(realName) && !_loadedFamilies.ContainsKey(realName))
+                _loadedFamilies[realName] = sixFamily;
+            if (!_loadedFamilies.ContainsKey(familyName))
+                _loadedFamilies[familyName] = sixFamily;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not load @font-face into SixLabors: {Family}", familyName);
+        }
+
         _logger.LogInformation("Registered font from @font-face: {Family} {Style} ({Size} bytes)", familyName, style, fontData.Length);
     }
 
@@ -160,6 +188,23 @@ public sealed class FontRegistry : IFontRegistry, IDisposable
                     FontData = data,
                     IsEmbedded = true
                 };
+
+                // Also load into SixLabors FontCollection for real metrics
+                try
+                {
+                    using var ms = new MemoryStream(data);
+                    var sixFamily = _fontCollection.Add(ms);
+                    var realName = sixFamily.Name;
+                    if (!string.IsNullOrEmpty(realName) && !_loadedFamilies.ContainsKey(realName))
+                        _loadedFamilies[realName] = sixFamily;
+                    if (!_loadedFamilies.ContainsKey(familyName))
+                        _loadedFamilies[familyName] = sixFamily;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Could not load font into SixLabors: {Family}", familyName);
+                }
+
                 _logger.LogDebug("Registered font: {Family} {Style}", familyName, style);
             }
         }
@@ -188,7 +233,7 @@ public sealed class FontRegistry : IFontRegistry, IDisposable
                         if (detectedStyle == style)
                         {
                             var data = File.ReadAllBytes(file);
-                            return new FontDefinition
+                            var def = new FontDefinition
                             {
                                 FamilyName = familyName,
                                 Style = style,
@@ -197,6 +242,21 @@ public sealed class FontRegistry : IFontRegistry, IDisposable
                                 FontData = data,
                                 IsEmbedded = true
                             };
+
+                            // Load into SixLabors for real metrics
+                            try
+                            {
+                                using var ms = new MemoryStream(data);
+                                var sixFamily = _fontCollection.Add(ms);
+                                var realName = sixFamily.Name;
+                                if (!string.IsNullOrEmpty(realName) && !_loadedFamilies.ContainsKey(realName))
+                                    _loadedFamilies[realName] = sixFamily;
+                                if (!_loadedFamilies.ContainsKey(familyName))
+                                    _loadedFamilies[familyName] = sixFamily;
+                            }
+                            catch { }
+
+                            return def;
                         }
                     }
                 }
@@ -286,6 +346,74 @@ public sealed class FontRegistry : IFontRegistry, IDisposable
 
         return widths;
     }
+
+    private FontMetrics? TryBuildMetricsFromSixLabors(string familyName, FontStyle style, float sizePoints)
+    {
+        if (!_loadedFamilies.TryGetValue(familyName, out var sixFamily))
+            return null;
+
+        var sixStyle = ConvertToSixStyle(style);
+        SixLabors.Fonts.Font sixFont;
+        try { sixFont = sixFamily.CreateFont(sizePoints, sixStyle); }
+        catch { return null; }
+
+        var fontMetrics = sixFont.FontMetrics;
+        var unitsPerEm = fontMetrics.UnitsPerEm;
+        if (unitsPerEm <= 0) return null;
+        float scale = sizePoints / unitsPerEm;
+
+        var advanceWidths = new Dictionary<char, float>(256);
+        int charsPopulated = 0;
+
+        // Common Unicode ranges: Basic Latin, Latin-1 Supplement
+        for (int c = 32; c <= 255; c++)
+        {
+            var cp = new SixLabors.Fonts.Unicode.CodePoint(c);
+            if (!sixFont.TryGetGlyphs(cp,
+                    SixLabors.Fonts.TextAttributes.None,
+                    SixLabors.Fonts.TextDecorations.None,
+                    SixLabors.Fonts.LayoutMode.HorizontalTopBottom,
+                    SixLabors.Fonts.ColorFontSupport.None,
+                    out var glyphs) || glyphs.Count == 0)
+                continue;
+
+            advanceWidths[(char)c] = glyphs[0].GlyphMetrics.AdvanceWidth * scale;
+            charsPopulated++;
+        }
+
+        if (charsPopulated == 0) return null;
+
+        var hMetrics = fontMetrics.HorizontalMetrics;
+        var ascender = hMetrics.Ascender * scale;
+        var descender = hMetrics.Descender * scale;
+        var lineHeight = (hMetrics.Ascender - hMetrics.Descender + hMetrics.LineGap) * scale;
+        var capHeight = ascender * 0.7f; // estimated from ascender
+
+        return new FontMetrics
+        {
+            FamilyName = familyName,
+            Style = style,
+            SizePoints = sizePoints,
+            Ascender = ascender,
+            Descender = descender,
+            LineHeight = lineHeight,
+            CapHeight = capHeight,
+            XHeight = capHeight * 0.6f,
+            UnderlinePosition = fontMetrics.UnderlinePosition * scale,
+            UnderlineThickness = fontMetrics.UnderlineThickness * scale,
+            StrikeoutPosition = fontMetrics.StrikeoutPosition * scale,
+            StrikeoutThickness = fontMetrics.StrikeoutSize * scale,
+            AdvanceWidths = advanceWidths
+        };
+    }
+
+    private static SixLabors.Fonts.FontStyle ConvertToSixStyle(FontStyle style) => style switch
+    {
+        FontStyle.Bold => SixLabors.Fonts.FontStyle.Bold,
+        FontStyle.Italic => SixLabors.Fonts.FontStyle.Italic,
+        FontStyle.BoldItalic => SixLabors.Fonts.FontStyle.BoldItalic,
+        _ => SixLabors.Fonts.FontStyle.Regular
+    };
 
     public void Dispose()
     {
