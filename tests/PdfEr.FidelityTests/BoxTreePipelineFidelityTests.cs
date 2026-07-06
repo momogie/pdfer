@@ -73,6 +73,16 @@ public class BoxTreePipelineFidelityTests : IAsyncLifetime
         line-height in pixels, not scaled by font-size at all.</p>
         </body></html>
         """)]
+    [InlineData("""
+        <html><body><p style="width:80mm;text-indent:15mm">This paragraph has a
+        first-line indent, so its opening words should start further right than
+        the rest of the wrapped lines below them.</p></body></html>
+        """)]
+    [InlineData("""
+        <html><body><p style="width:20mm;white-space:nowrap">This paragraph
+        should never wrap even though it is far too narrow to fit on one line
+        normally, because white-space is nowrap.</p></body></html>
+        """)]
     public async Task BoxTreePipeline_SimpleDocument_ProducesComparableOutput(string html)
     {
         var pdfChromium = await _helper!.RenderHtmlViaChromiumAsync(html);

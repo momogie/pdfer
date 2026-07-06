@@ -86,7 +86,9 @@ tak ada line box sungguhan.
       "kata" untuk kasus itu (perubahan lebih besar ke model `InlineItem`,
       bukan sekadar flag). Diverifikasi 4 unit test (`nowrap` tidak wrap
       meski sempit, `nowrap` tetap patuh `<br>`, `pre-line` mempertahankan
-      newline, `pre-line` tetap collapse spasi berulang).
+      newline, `pre-line` tetap collapse spasi berulang) + harness fidelity
+      (paragraf sempit `white-space:nowrap` yang tetap satu baris) →
+      **SSIM 0.9999** vs Chromium.
 - [x] **`text-align`** termasuk **`justify`** (distribusi ruang antar-kata, baris
       terakhir tidak di-justify sesuai CSS 2.1 §16.2) & centering/right — diverifikasi
       lewat 5 unit test (`Place_TextAlignLeft/Right/Center/Justify_*`) + harness
@@ -96,10 +98,8 @@ tak ada line box sungguhan.
       atau negatif untuk outdent), dan lebar yang tersedia untuk keputusan wrap baris
       pertama juga dikurangi indent tersebut (bukan cuma pergeseran visual). 4 unit
       test (`Place_TextIndent_ShiftsFirstLineOnly`, `Place_NoTextIndent_*`,
-      `Place_NegativeTextIndent_*`). **Catatan**: fidelity harness untuk item ini
-      belum dijalankan pada sesi ini karena `PdfWriter`/`PdfBlockContentWriter` sedang
-      ada perubahan lain yang belum stabil (lihat progres di bawah) — verifikasi SSIM
-      menyusul begitu file itu selesai.
+      `Place_NegativeTextIndent_*`) + harness fidelity (paragraf `text-indent:15mm`
+      dengan wrap) → **SSIM 0.9999** vs Chromium.
 - [ ] **`text-transform`, `text-decoration`** — belum dikerjakan di box-tree pipeline
       (streaming pipeline sudah punya sebagian via tag handler `UnderlineHandler` dll,
       tapi itu tidak dipakai jalur box-tree).
@@ -183,6 +183,18 @@ diverifikasi lewat build **`PdfEr.Core`+`PdfEr.Core.Tests` saja** (keduanya
 tidak bergantung ke `PdfEr.Infrastructure`, jadi bisa dibangun & diuji terisolasi
 sementara Infrastructure belum stabil). Harness fidelity & Infrastructure/
 Integration menyusul begitu build penuh hijau lagi.
+
+**Sesi 7**: pekerjaan font-metrics konkuren (Sesi 5-6) selesai dan stabil —
+`PdfEr.Infrastructure` build hijau lagi. Verifikasi penuh dijalankan: 282/282
+`PdfEr.Core.Tests` stabil 3x run, 54 Infrastructure (termasuk test `Tw` operator
+yang sebelumnya gagal — sekarang lolos), 54 Integration. Harness fidelity utama
+Fase 0 (streaming pipeline) skornya **membaik sedikit** (0.9989→0.9990, dst di
+semua kategori) berkat font-metrics asli menggantikan estimasi — efek samping
+positif dari pekerjaan Anda, bukan regresi. Ditambahkan 2 kasus fidelity
+eksploratif box-tree yang tertunda dari Sesi 5-6: `text-indent:15mm` pada
+paragraf yang wrap → **SSIM 0.9999**; `white-space:nowrap` pada paragraf sempit
+yang tetap satu baris → **SSIM 0.9999**. Total 12 kasus eksploratif box-tree,
+semua lolos. Build solution penuh tanpa error.
 
 **Belum dikerjakan**: `white-space: pre`/`pre-wrap` (butuh pelestarian whitespace
 mentah, perubahan lebih besar), vertical-align, inline-block sebagai atomic inline
