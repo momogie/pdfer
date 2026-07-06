@@ -26,6 +26,15 @@ public sealed class PdfConverterService : IPdfConverter
     private readonly IFontRegistry _fontRegistry;
     private readonly PdfConverterConfiguration _defaultConfig;
 
+    // Box-tree pipeline (docs/plans/phase-01-foundation.md), used only when
+    // PdfConverterConfiguration.UseBoxTreeLayout is set. Stateless per call
+    // (unlike LayoutEngine, which carries streaming-pipeline cursor state),
+    // so plain fields are enough -- no per-request reset needed.
+    private readonly BoxTreeBuilder _boxTreeBuilder;
+    private readonly IntrinsicSizeCalculator _intrinsicSizeCalculator;
+    private readonly BlockPlacer _blockPlacer;
+    private readonly BoxTreePaintAdapter _boxTreePaintAdapter;
+
     private DocumentLayout _documentLayout = null!;
     private BlockBox? _currentBlock;
     private PdfConverterConfiguration _currentConfig = null!;
@@ -52,6 +61,11 @@ public sealed class PdfConverterService : IPdfConverter
         _pdfWriter = pdfWriter;
         _fontRegistry = fontRegistry;
         _defaultConfig = defaultConfig;
+
+        _boxTreeBuilder = new BoxTreeBuilder(_cssMerger, _cssNormalizer);
+        _intrinsicSizeCalculator = new IntrinsicSizeCalculator(_fontRegistry);
+        _blockPlacer = new BlockPlacer();
+        _boxTreePaintAdapter = new BoxTreePaintAdapter();
     }
 
     public byte[] ConvertHtmlToPdf(string html, PdfConverterConfiguration? config = null)
@@ -92,9 +106,38 @@ public sealed class PdfConverterService : IPdfConverter
         _listStack.Clear();
 
         if (body != null)
-            WalkDom(body, null);
+        {
+            if (config.UseBoxTreeLayout)
+                RunBoxTreePipeline(parseResult.Document, _documentLayout.Pages[0]);
+            else
+                WalkDom(body, null);
+        }
 
         return _pdfWriter.WriteDocumentLayout(_documentLayout, config);
+    }
+
+    /// <summary>
+    /// Box-tree pipeline entry point (docs/plans/phase-01-foundation.md), used only
+    /// when PdfConverterConfiguration.UseBoxTreeLayout is set. Deliberately scoped:
+    /// single page only (no fragmentation/pagination -- that's Phase 6), and
+    /// BoxTreeBuilder does not dispatch to ITagHandler, so tag-specific behavior
+    /// (list markers/counters, table layout, flex/grid, forms, images, links) is not
+    /// yet reproduced here. This exists to let the fidelity harness (Phase 0) compare
+    /// the box-tree pipeline's output against the streaming pipeline's on simple
+    /// documents, not to replace WalkDom's feature coverage.
+    /// </summary>
+    private void RunBoxTreePipeline(AngleSharp.Dom.IDocument document, PageLayout page)
+    {
+        var root = _boxTreeBuilder.BuildFromDocument(document);
+        if (root == null) return;
+
+        _intrinsicSizeCalculator.Calculate(root);
+
+        var containingBlock = new ContainingBlock(page.ContentBox.Width, page.ContentBox.Height, true);
+        _blockPlacer.Place(root, containingBlock, page.ContentBox.X, page.ContentBox.Y);
+
+        var rootBlock = _boxTreePaintAdapter.Adapt(root);
+        page.Blocks.Add(rootBlock);
     }
 
     private void RegisterFontFaces()

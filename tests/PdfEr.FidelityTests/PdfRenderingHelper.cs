@@ -92,6 +92,18 @@ public class PdfRenderingHelper : IAsyncDisposable
     public byte[] RenderHtmlViaPdfEr(string htmlContent) =>
         _pdfConverter.ConvertHtmlToPdf(htmlContent);
 
+    /// <summary>
+    /// Renders via the box-tree pipeline (docs/plans/phase-01-foundation.md) instead
+    /// of the default streaming pipeline, for comparing the two independently.
+    /// </summary>
+    public byte[] RenderHtmlViaPdfErBoxTree(string htmlContent) =>
+        _pdfConverter.ConvertHtmlToPdf(htmlContent, new PdfConverterConfiguration
+        {
+            PageFormat = PageFormat.A4,
+            Orientation = PageOrientation.Portrait,
+            UseBoxTreeLayout = true,
+        });
+
     public Task<Image<Rgba32>> RasterizePdfAsync(byte[] pdfBytes)
     {
         // PDFium-backed rasterizer (via PDFtoImage) — renders actual PDF content,

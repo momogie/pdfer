@@ -109,14 +109,24 @@ Konsep first-class yang diperkenalkan (mengganti kursor global):
       lama, field-per-field (X/Y/Width/Height/Padding/Border/Margin, `ComputedStyle`).
       Text/Inline/Anonymous box **tidak** jadi `BlockBox` bersarang — diratakan jadi
       `InlineBox` di `InlineContent` milik `BlockBox` leluhur terdekat, sesuai model lama
-      yang menyimpan inline content sebagai list datar, bukan pohon. **Belum dipakai
-      di mana pun** — `PdfWriter`/`PdfConverterService` belum tahu box-tree pipeline ada;
-      ini baru fungsi konversi yang teruji berdiri sendiri. Ini juga berarti **belum ada**
-      jalur box-tree → PDF byte sungguhan untuk dibandingkan lewat fidelity harness (Fase 0)
-      — masih perlu disatukan dengan `PdfConverterService`/`UseBoxTreeLayout` dulu.
+      yang menyimpan inline content sebagai list datar, bukan pohon.
 - [x] **Feature flag** `UseBoxTreeLayout` ditambahkan di `PdfConverterConfiguration`
-      (default `false`). **Belum ada percabangan** yang membacanya di `PdfConverterService`
-      atau `LayoutEngine` — flag ada tapi belum "hidup".
+      (default `false`) **dan sekarang benar-benar hidup**: `PdfConverterService.ConvertAsync`
+      bercabang ke `RunBoxTreePipeline` (baru) kalau flag di-set, memanggil
+      `BoxTreeBuilder` → `IntrinsicSizeCalculator` → `BlockPlacer` → `BoxTreePaintAdapter`
+      lalu menaruh hasilnya di `PageLayout.Blocks` — `PdfWriter` yang sudah ada meng-emit
+      PDF dari situ tanpa perubahan. **Pertama kalinya box-tree pipeline menghasilkan
+      byte PDF sungguhan**, diverifikasi lewat 5 test integrasi baru
+      (`BoxTreePipelineIntegrationTests`: PDF valid untuk paragraf sederhana, blok
+      bersarang, body kosong, div berstyle; plus 1 test yang mengonfirmasi default
+      config `UseBoxTreeLayout=false` tetap lewat pipeline streaming) dan 2 test
+      fidelity eksploratif baru (`BoxTreePipelineFidelityTests`, terpisah dari harness
+      utama Fase 0 karena pipeline ini masih sangat parsial — lihat catatan di file
+      itu) yang membandingkan langsung ke Chromium: **SSIM 0.9999–1.0000** untuk
+      paragraf sederhana dan div+h1+p bersarang. **Sengaja dibatasi**: `BoxTreeBuilder`
+      belum dispatch ke `ITagHandler`, jadi list/tabel/flex/grid/gambar/link **tidak**
+      direproduksi lewat jalur ini — angka SSIM tinggi di atas hanya berlaku untuk
+      dokumen sesederhana yang diuji, bukan klaim fidelity menyeluruh.
 - [ ] Satukan konversi unit di `IUnitConverter`; `ParseLength`/`ParseCssLength` lokal di
       [LayoutEngine.cs:509-546](../../src/PdfEr.Core/Application/HtmlProcessing/LayoutEngine.cs#L509-L546)
       masih tersebar seperti semula. `ComputedStyle.ResolveFontSizePt` sengaja
@@ -124,7 +134,7 @@ Konsep first-class yang diperkenalkan (mengganti kursor global):
       coupling dua arah antar proyek Domain/Application saat ini — perlu disatukan saat
       `IUnitConverter` dibereskan.
 
-## Progres nyata (6 sesi — bukan Fase 1 selesai, lihat status per item di atas)
+## Progres nyata (7 sesi — bukan Fase 1 selesai, lihat status per item di atas)
 
 **Sesi 1**: tipe data box-tree tambahan (`LayoutBox`, `ComputedStyle`, dll.), tanpa
 mengubah pipeline streaming. Ditemukan & diperbaiki bug race-condition di `CssMerger`
@@ -173,16 +183,30 @@ style passthrough, urutan children). Diverifikasi: 209/209 `PdfEr.Core.Tests` st
 run, 54 Infrastructure + 46 Integration tetap hijau, build solution penuh tanpa error.
 Tidak menyentuh `LayoutEngine`/`PdfConverterService`/`PdfWriter`.
 
+**Sesi 7 (milestone)**: **pipeline disambungkan end-to-end.** `PdfConverterService`
+sekarang punya `RunBoxTreePipeline` yang dipanggil saat `config.UseBoxTreeLayout=true`,
+memanggil keempat komponen (Builder → Sizer → Placer → Adapter) lalu menaruh hasilnya
+di halaman yang sama yang dipakai `PdfWriter`. Ini pertama kalinya box-tree pipeline
+menghasilkan file PDF sungguhan. Hasil ukur (lihat item checklist "Feature flag" untuk
+detail test): **SSIM 0.9999–1.0000** vs Chromium pada 2 dokumen sederhana (paragraf
+polos; div+h1+p bersarang) — jauh melebihi target ≥0.95 roadmap, **tapi hanya untuk
+kelas dokumen paling sederhana**, karena `BoxTreeBuilder` belum tahu soal tag handler
+(list, tabel, flex/grid, gambar, link semuanya di luar cakupan jalur ini untuk saat
+ini). Diverifikasi: 209/209 `PdfEr.Core.Tests` stabil 3x run, 51/51 Integration
+(termasuk 5 test box-tree baru), 54 Infrastructure, harness fidelity utama Fase 0
+(pipeline streaming) skornya **identik** sebelum/sesudah (0.998–0.999) — bukti pipeline
+lama benar-benar tidak terpengaruh oleh percabangan baru ini. Build solution penuh
+tanpa error.
+
 **Belum dikerjakan (sengaja, untuk sesi terpisah)**: margin collapsing parent/first-child,
 parent/last-child, dan empty-block self-collapsing; Inline Formatting Context sungguhan
 (line box asli, bukan placeholder satu-baris); placement khusus untuk
-float/position/table/flex/grid; migrasi tag handler; **menyambungkan pipeline** (memanggil
-`BoxTreeBuilder` → `IntrinsicSizeCalculator` → `BlockPlacer` → `BoxTreePaintAdapter` dari
-`PdfConverterService` di belakang flag `UseBoxTreeLayout`, lalu membandingkan hasilnya
-lewat fidelity harness Fase 0). Fase 1 tetap XL; enam slice sejauh ini punya semua
-komponen individual teruji, tapi **belum ada satu baris kode pun yang benar-benar
-memanggil pipeline box-tree secara end-to-end** — itu langkah besar berikutnya, dan
-baru di situ box-tree pipeline bisa menghasilkan PDF sungguhan untuk dibandingkan.
+float/position/table/flex/grid; **migrasi tag handler** (ini yang paling penting
+berikutnya — tanpa ini, box-tree pipeline tidak bisa menangani dokumen nyata sama
+sekali di luar teks/blok polos: tidak ada list marker, tidak ada tabel, tidak ada
+gambar). Fase 1 tetap XL; tujuh slice sejauh ini membuktikan arsitekturnya bekerja
+untuk kasus sederhana — pekerjaan besar berikutnya adalah memperluas cakupan fitur,
+bukan lagi membangun fondasi.
 
 ## Migrasi tag handler
 
