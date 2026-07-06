@@ -71,13 +71,13 @@ public sealed class BlockPlacer
 
         if (box.Kind == LayoutBoxKind.Text)
         {
-            geometry.Height = box.Style.FontSizeMm * AutoLineHeightFactor;
+            geometry.Height = ResolveLineHeightMm(box.Style);
         }
         else if (box.Kind == LayoutBoxKind.LineBreak)
         {
             // Forces vertical space like a single empty line, matching
             // BreakHandler's legacy behavior (a text run consisting of "\n").
-            geometry.Height = box.Style.FontSizeMm * AutoLineHeightFactor;
+            geometry.Height = ResolveLineHeightMm(box.Style);
         }
         else if (box.Kind == LayoutBoxKind.Image)
         {
@@ -215,6 +215,37 @@ public sealed class BlockPlacer
         return x; // margin-right absorbs everything, box stays at the left edge
     }
 
+    /// <summary>
+    /// CSS 2.1 10.8.1 "line-height": a unitless number is a multiplier of this
+    /// element's own font-size (e.g. "1.5" -> 1.5x); a length or percentage
+    /// resolves to an absolute distance (percentage of font-size); "normal" or
+    /// absent falls back to AutoLineHeightFactor, matching the streaming
+    /// pipeline's existing convention (memory [[pdfer-layout-units]]) so both
+    /// pipelines agree when no explicit line-height is set.
+    /// </summary>
+    private static float ResolveLineHeightMm(ComputedStyle style)
+    {
+        var raw = style.GetPropertyValue("line-height")?.Trim().ToLowerInvariant();
+        if (string.IsNullOrEmpty(raw) || raw == "normal")
+            return style.FontSizeMm * AutoLineHeightFactor;
+
+        if (raw.EndsWith('%'))
+        {
+            return float.TryParse(raw[..^1], out var pct)
+                ? style.FontSizeMm * pct / 100f
+                : style.FontSizeMm * AutoLineHeightFactor;
+        }
+
+        // A bare number is a multiplier of font-size (not an absolute length).
+        if (float.TryParse(raw, out var multiplier))
+            return style.FontSizeMm * multiplier;
+
+        // Otherwise it's a length (px/pt/mm/etc.) -- an absolute line-height,
+        // not scaled by font-size.
+        var lengthMm = CssLengthParser.ParseLengthMm(raw);
+        return lengthMm > 0 ? lengthMm : style.FontSizeMm * AutoLineHeightFactor;
+    }
+
     private static bool IsInlineLevel(LayoutBox box) =>
         box.Kind is LayoutBoxKind.Text or LayoutBoxKind.Inline or LayoutBoxKind.Anonymous
             or LayoutBoxKind.Image or LayoutBoxKind.LineBreak;
@@ -288,8 +319,8 @@ public sealed class BlockPlacer
             bool isLastLine = lineIndex == lines.Count - 1;
 
             float lineHeight = line.Count > 0
-                ? line.Max(i => i.Kind == InlineItemKind.Image ? ImageHeightMm(i.ImageSource!) : i.Style.FontSizeMm * AutoLineHeightFactor)
-                : (items.Count > 0 ? items[0].Style.FontSizeMm * AutoLineHeightFactor : 0);
+                ? line.Max(i => i.Kind == InlineItemKind.Image ? ImageHeightMm(i.ImageSource!) : ResolveLineHeightMm(i.Style))
+                : (items.Count > 0 ? ResolveLineHeightMm(items[0].Style) : 0);
 
             // Natural (left-aligned) width of this line: sum of item widths plus
             // one space gap between each pair of items.

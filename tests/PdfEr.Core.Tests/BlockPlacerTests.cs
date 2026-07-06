@@ -557,6 +557,62 @@ public class BlockPlacerTests
     }
 
     [Fact]
+    public void Place_TextBox_LineHeightAsUnitlessNumber_MultipliesFontSize()
+    {
+        var decl = new CssDeclarationBlock();
+        decl.SetProperty("line-height", "2");
+        var box = new LayoutBox { Kind = LayoutBoxKind.Text, TextContent = "hi", Style = ComputedStyle.Resolve(decl) };
+        box.Intrinsic = new IntrinsicSizes(0, 0);
+
+        var placer = new BlockPlacer();
+        placer.Place(box, new ContainingBlock(100, 0, false), 0, 0);
+
+        Assert.Equal(box.Style.FontSizeMm * 2f, box.Geometry.Height, 3);
+    }
+
+    [Fact]
+    public void Place_TextBox_LineHeightAsPercent_ResolvesAgainstFontSize()
+    {
+        var decl = new CssDeclarationBlock();
+        decl.SetProperty("line-height", "150%");
+        var box = new LayoutBox { Kind = LayoutBoxKind.Text, TextContent = "hi", Style = ComputedStyle.Resolve(decl) };
+        box.Intrinsic = new IntrinsicSizes(0, 0);
+
+        var placer = new BlockPlacer();
+        placer.Place(box, new ContainingBlock(100, 0, false), 0, 0);
+
+        Assert.Equal(box.Style.FontSizeMm * 1.5f, box.Geometry.Height, 3);
+    }
+
+    [Fact]
+    public void Place_TextBox_LineHeightAsAbsoluteLength_IsNotScaledByFontSize()
+    {
+        var decl = new CssDeclarationBlock();
+        decl.SetProperty("line-height", "20mm");
+        var box = new LayoutBox { Kind = LayoutBoxKind.Text, TextContent = "hi", Style = ComputedStyle.Resolve(decl) };
+        box.Intrinsic = new IntrinsicSizes(0, 0);
+
+        var placer = new BlockPlacer();
+        placer.Place(box, new ContainingBlock(100, 0, false), 0, 0);
+
+        Assert.Equal(20f, box.Geometry.Height, 3);
+    }
+
+    [Fact]
+    public void Place_TextBox_LineHeightNormal_FallsBackToAutoFactor()
+    {
+        var decl = new CssDeclarationBlock();
+        decl.SetProperty("line-height", "normal");
+        var box = new LayoutBox { Kind = LayoutBoxKind.Text, TextContent = "hi", Style = ComputedStyle.Resolve(decl) };
+        box.Intrinsic = new IntrinsicSizes(0, 0);
+
+        var placer = new BlockPlacer();
+        placer.Place(box, new ContainingBlock(100, 0, false), 0, 0);
+
+        Assert.Equal(box.Style.FontSizeMm * 1.3f, box.Geometry.Height, 3);
+    }
+
+    [Fact]
     public void Place_NestedBlocks_ChildContainingBlockShrinksByParentPadding()
     {
         var decl = new CssDeclarationBlock();

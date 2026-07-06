@@ -65,6 +65,14 @@ public class BoxTreePipelineFidelityTests : IAsyncLifetime
         <html><body><div style="width:80mm;margin:0 auto;border:1px solid black">
         This div is centered horizontally on the page via margin:0 auto.</div></body></html>
         """)]
+    [InlineData("""
+        <html><body>
+        <p style="width:80mm;line-height:2">This paragraph has double line-height,
+        so wrapped lines should be spaced twice as far apart as normal.</p>
+        <p style="width:80mm;line-height:20px">This paragraph has an absolute
+        line-height in pixels, not scaled by font-size at all.</p>
+        </body></html>
+        """)]
     public async Task BoxTreePipeline_SimpleDocument_ProducesComparableOutput(string html)
     {
         var pdfChromium = await _helper!.RenderHtmlViaChromiumAsync(html);

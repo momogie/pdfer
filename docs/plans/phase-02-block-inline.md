@@ -63,9 +63,14 @@ tak ada line box sungguhan.
       bukan satu `InlineBox` per blok). Diverifikasi SSIM 0.9998 pada paragraf yang
       sengaja dibuat lebar untuk memaksa wrap.
 - [ ] **Baseline alignment** & **`vertical-align`** — belum dikerjakan di box-tree pipeline.
-- [x] **`line-height`** sebagai jarak antar-baseline — pakai `FontSizeMm * 1.3` (auto
-      line-height factor), sama seperti streaming pipeline. **Belum** membaca CSS
-      `line-height` eksplisit (`1.5`, `20px`, dst.) — masih hardcoded 1.3.
+- [x] **`line-height`** — `ResolveLineHeightMm` (CSS 2.1 §10.8.1): angka tanpa unit
+      (mis. `2`) = pengali font-size; persentase = persentase dari font-size; panjang
+      absolut (`20px`, `20mm`, dst.) = **tidak** diskalakan font-size; `normal`/tidak
+      ada = fallback ke `AutoLineHeightFactor` (1.3, sama seperti streaming pipeline).
+      Diverifikasi 4 unit test (pengali, persen, panjang absolut, `normal`) + harness
+      fidelity (paragraf `line-height:2` dan `line-height:20px` berdampingan →
+      **SSIM 0.9998** vs Chromium). Catatan: baru mempengaruhi tinggi baris IFC, belum
+      mempengaruhi baseline alignment (itu bagian dari item `vertical-align` di bawah).
 - [~] **`inline-block`** — shrink-to-fit width **sudah ada** dari Fase 1
       (`BlockPlacer.ResolveWidth`, pakai `Intrinsic.MaxContentWidth`), tapi **belum**
       benar-benar ikut aliran baris IFC (inline-block masih diperlakukan seperti block
@@ -96,7 +101,7 @@ tak ada line box sungguhan.
 - Paragraf multi-baris membungkus di titik yang sama dengan Chrome (untuk font yang sama).
   ✅ diverifikasi (SSIM 0.9998 pada kasus wrap paksa).
 
-## Progres nyata (3 sesi)
+## Progres nyata (4 sesi)
 
 **Sesi 1**: `box-sizing` (content-box/border-box) dan `text-align` (left/right/center/
 justify) ditambahkan ke `BlockPlacer`. Keduanya diverifikasi dobel: unit test dengan
@@ -128,7 +133,15 @@ stabil 3x run, 54 Infrastructure + 54 Integration tetap hijau, harness fidelity 
 Fase 0 (streaming) **identik**, harness eksploratif box-tree (div `margin:0 auto`) →
 **SSIM 0.9999** vs Chromium. Build solution penuh tanpa error.
 
-**Belum dikerjakan**: vertical-align, line-height eksplisit dari CSS, inline-block
-sebagai atomic inline item sungguhan, white-space, text-indent, text-transform/
-text-decoration, overflow, margin collapsing parent/child. Fase 2 berlanjut, jauh
-dari selesai.
+**Sesi 4**: CSS `line-height` eksplisit — `ResolveLineHeightMm` menggantikan konstanta
+`AutoLineHeightFactor` yang sebelumnya dipakai tanpa syarat di 4 titik panggil.
+Menangani 3 bentuk nilai CSS (pengali tanpa unit, persentase, panjang absolut) plus
+fallback `normal`. 4 test baru dengan nilai dihitung tangan — 275/275
+`PdfEr.Core.Tests` stabil 3x run, 54 Infrastructure + 54 Integration tetap hijau,
+harness fidelity utama Fase 0 (streaming) **identik**, harness eksploratif box-tree
+(paragraf `line-height:2` dan `line-height:20px`) → **SSIM 0.9998** vs Chromium.
+Build solution penuh tanpa error.
+
+**Belum dikerjakan**: vertical-align, inline-block sebagai atomic inline item
+sungguhan, white-space, text-indent, text-transform/text-decoration, overflow,
+margin collapsing parent/child. Fase 2 berlanjut, jauh dari selesai.
