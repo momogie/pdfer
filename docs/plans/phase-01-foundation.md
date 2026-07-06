@@ -77,7 +77,7 @@ Konsep first-class yang diperkenalkan (mengganti kursor global):
       bukan jalur utama. **Belum dikonsumsi** LayoutEngine sama sekali — tebakan
       `textLen * fontSize * 0.5f` di LayoutEngine.cs masih jalan apa adanya sampai
       Pass 2 (placement) menggantikan pemanggil-pemanggilnya.
-- [~] **Pass 2 — placement (slice 1+2/N: plain BFC + adjacent-sibling margin collapsing)**:
+- [~] **Pass 2 — placement (slice 1+2+3/N: plain BFC + margin collapsing + real IFC line-breaking)**:
       `BlockPlacer` di
       [BlockPlacer.cs](../../src/PdfEr.Core/Application/HtmlProcessing/BlockPlacer.cs)
       menempatkan box top-down: width mengisi containing block (atau resolve
@@ -88,18 +88,31 @@ Konsep first-class yang diperkenalkan (mengganti kursor global):
       sudah diimplementasikan**: `CollapseMargins` pakai rumus umum
       (`max(positif) + min(negatif)`) — dites untuk kasus keduanya positif (ambil
       max), keduanya negatif (ambil min/paling negatif, box saling overlap), dan
-      campuran (dijumlah). **Sengaja belum**: collapsing parent/first-child &
-      parent/last-child serta empty-block self-collapsing (butuh border/padding
-      context lintas level rekursi — perubahan struktural lebih besar, slice
-      terpisah lagi; dites eksplisit bahwa margin-top first-child berlaku penuh,
-      bukan collapse ke parent), Inline Formatting Context sungguhan (Text/
-      Inline/Anonymous masih pakai satu "placeholder line box" `FontSizeMm * 1.3f`,
-      sama seperti auto line-height streaming pipeline — bukan real line-breaking),
-      serta placement khusus float/position/table/flex/grid (semua `LayoutBoxKind`
-      selain Block/Text/InlineBlock diperlakukan seperti block biasa untuk saat ini).
-      `fontSize * 1.3f` di [LayoutEngine.cs:366-367](../../src/PdfEr.Core/Application/HtmlProcessing/LayoutEngine.cs#L366-L367)
-      (pipeline streaming) masih jalan terpisah seperti sebelumnya — `BlockPlacer`
-      belum dipanggil dari mana pun di luar unit test.
+      campuran (dijumlah).
+      **Inline Formatting Context sungguhan (real word-wrap) sudah diimplementasikan**:
+      `PlaceInlineContent` mendeteksi kontainer yang semua children-nya inline-level
+      (Text/Inline/Anonymous/Image/LineBreak — persis kondisi yang dijamin
+      `BoxTreeBuilder`'s anonymous-block-wrapping), meratakan jadi urutan "item"
+      (kata via pemisah whitespace — sama seperti definisi min-content di
+      `IntrinsicSizeCalculator`, gambar sebagai item atomik, `<br>` sebagai forced
+      break), lalu greedy-wrap ke baris dibatasi lebar content sungguhan (bukan lagi
+      placeholder satu baris). Setiap baris ditulis ulang jadi `LayoutBox` Text/Image
+      baru dengan geometri sudah ditempatkan, sehingga `BoxTreePaintAdapter` yang ada
+      tetap jalan tanpa perubahan. Perlu `IFontRegistry` (opsional — `null` = fallback
+      ke perilaku placeholder satu-baris lama, demi backward-compat test lama).
+      Diverifikasi lewat harness fidelity (lihat bawah): paragraf yang sengaja
+      dibuat lebar untuk memaksa wrap mencetak **SSIM 0.9998** vs Chromium — bukti
+      empiris titik wrap-nya benar-benar cocok, bukan cuma lolos unit test terisolasi.
+      **Sengaja belum**: collapsing parent/first-child & parent/last-child serta
+      empty-block self-collapsing (butuh border/padding context lintas level
+      rekursi — perubahan struktural lebih besar, slice terpisah lagi; dites
+      eksplisit bahwa margin-top first-child berlaku penuh, bukan collapse ke
+      parent); UAX#14 line-breaking penuh (masih split whitespace polos — cukup
+      untuk teks Latin sederhana, salah untuk CJK/hyphenation/kata majemuk —
+      itu pekerjaan Fase 3); bidi/RTL; per-run font/size berbeda dalam satu baris
+      (BoxTreeBuilder belum menggabung sibling inline run berbeda style jadi satu
+      baris); placement khusus float/position/table/flex/grid (semua `LayoutBoxKind`
+      selain yang disebutkan di atas diperlakukan seperti block biasa untuk saat ini).
 - [x] Objek **ContainingBlock** (struct, `Width`/`Height`/`HeightIsDefinite`) dan enum
       **FormattingContextKind** (Block/Inline/Flex/Grid/Table) sebagai penanda — keduanya
       tipe data saja, **belum dipakai** untuk resolusi `%` atau pemisahan BFC/IFC nyata.
@@ -134,7 +147,7 @@ Konsep first-class yang diperkenalkan (mengganti kursor global):
       coupling dua arah antar proyek Domain/Application saat ini — perlu disatukan saat
       `IUnitConverter` dibereskan.
 
-## Progres nyata (8 sesi — bukan Fase 1 selesai, lihat status per item di atas)
+## Progres nyata (9 sesi — bukan Fase 1 selesai, lihat status per item di atas)
 
 **Sesi 1**: tipe data box-tree tambahan (`LayoutBox`, `ComputedStyle`, dll.), tanpa
 mengubah pipeline streaming. Ditemukan & diperbaiki bug race-condition di `CssMerger`
@@ -235,12 +248,34 @@ jujur: ini dokumen sesederhana yang diuji, bukan bukti fidelity list menyeluruh
 (implementasi SSIM juga aproksimasi kasar, lihat catatan di `phase-00-harness.md`).
 Build solution penuh tanpa error.
 
+**Sesi 9 (milestone)**: **real line-breaking/word-wrap** — penyelesai utama Pass 2 yang
+tersisa dari sesi-sesi sebelumnya. `BlockPlacer` sekarang punya `IFontRegistry?`
+opsional; ketika ada dan sebuah box terdeteksi murni inline-formatting-context,
+`PlaceInlineContent` meratakan children jadi item kata/gambar/forced-break lalu
+greedy-wrap ke baris nyata dibatasi lebar konten (lihat detail di item checklist
+Pass 2). `PdfConverterService` sekarang meneruskan `_fontRegistry` yang sama ke
+`BlockPlacer`, jadi pipeline box-tree end-to-end **sekarang benar-benar word-wrap**,
+bukan lagi satu baris placeholder tak peduli lebar.
+
+Diverifikasi: 7 test baru `BlockPlacerLineBreakingTests` (teks pendek tetap satu
+baris, teks lebar wrap ke banyak baris, baris bertumpuk sesuai line-height, `<br>`
+memaksa baris baru terlepas dari lebar, kata tunggal lebih lebar dari container tidak
+menghasilkan baris kosong tak berujung, gambar diperlakukan sebagai item atomik,
+fallback ke perilaku placeholder lama saat `IFontRegistry` `null`) — Core suite
+227/227 stabil 3x run; 54 Infrastructure + 54 Integration tetap hijau (termasuk semua
+test box-tree pipeline sebelumnya, membuktikan wiring end-to-end tidak rusak oleh
+perubahan ini); harness fidelity utama Fase 0 (streaming) **identik** (0.998–0.999);
+harness eksploratif box-tree ditambah 1 kasus paragraf sengaja lebar untuk memaksa
+wrap — **SSIM 0.9998** vs Chromium, bukti empiris titik wrap benar-benar cocok
+secara visual, bukan cuma lolos unit test angka. Build solution penuh tanpa error.
+
 **Belum dikerjakan (sengaja, untuk sesi terpisah)**: margin collapsing parent/first-child,
-parent/last-child, dan empty-block self-collapsing; Inline Formatting Context sungguhan
-(line box asli/word-wrap, bukan placeholder satu-baris); layout tabel/flex/grid/float/
-positioning sungguhan (lihat di atas). Fase 1 sudah mencakup pondasi + subset tag umum;
-sisa pekerjaan besar adalah layout algorithm per-fitur yang masing-masing sudah
-punya fase sendiri di roadmap (5, 6, 7).
+parent/last-child, dan empty-block self-collapsing; UAX#14 line-breaking penuh (masih
+whitespace split, salah untuk CJK/hyphenation — Fase 3); bidi/RTL; layout
+tabel/flex/grid/float/positioning sungguhan (lihat di atas). Fase 1 sekarang mencakup
+pondasi + subset tag umum + word-wrap dasar untuk teks Latin — cakupan fitur yang
+tersisa (tabel, flex/grid, dst.) masing-masing sudah punya fase sendiri di roadmap
+(5, 6, 7), bukan lagi bagian "pondasi" Fase 1.
 
 ## Migrasi tag handler
 

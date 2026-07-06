@@ -31,6 +31,12 @@ public class BoxTreePipelineFidelityTests : IAsyncLifetime
     [InlineData("<html><body><div><h1>Title</h1><p>Some paragraph text.</p></div></body></html>")]
     [InlineData("<html><body><ul><li>First item</li><li>Second item</li><li>Third item</li></ul></body></html>")]
     [InlineData("<html><body><ol><li>Alpha</li><li>Beta</li></ol></body></html>")]
+    [InlineData("""
+        <html><body><p style="width:80mm">This is a long paragraph of text that is
+        definitely wide enough to require word-wrapping across multiple lines once
+        the box-tree pipeline's real line-breaking is exercised against a narrow
+        containing block width.</p></body></html>
+        """)]
     public async Task BoxTreePipeline_SimpleDocument_ProducesComparableOutput(string html)
     {
         var pdfChromium = await _helper!.RenderHtmlViaChromiumAsync(html);

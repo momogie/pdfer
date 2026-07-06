@@ -65,7 +65,7 @@ public sealed class PdfConverterService : IPdfConverter
 
         _boxTreeBuilder = new BoxTreeBuilder(_cssMerger, _cssNormalizer, imageService);
         _intrinsicSizeCalculator = new IntrinsicSizeCalculator(_fontRegistry);
-        _blockPlacer = new BlockPlacer();
+        _blockPlacer = new BlockPlacer(_fontRegistry);
         _boxTreePaintAdapter = new BoxTreePaintAdapter();
     }
 
