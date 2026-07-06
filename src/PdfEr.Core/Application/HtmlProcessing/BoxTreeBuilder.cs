@@ -128,6 +128,13 @@ public sealed class BoxTreeBuilder
                     if (attrs.TryGetValue("name", out var name) && !string.IsNullOrWhiteSpace(name))
                         box.AnchorName = name;
                 }
+                else if (tagName is "td" or "th")
+                {
+                    if (attrs.TryGetValue("colspan", out var colspanRaw) && int.TryParse(colspanRaw, out var colspan) && colspan > 0)
+                        box.ColSpan = colspan;
+                    if (attrs.TryGetValue("rowspan", out var rowspanRaw) && int.TryParse(rowspanRaw, out var rowspan) && rowspan > 0)
+                        box.RowSpan = rowspan;
+                }
 
                 parentBox.AddChild(box);
 

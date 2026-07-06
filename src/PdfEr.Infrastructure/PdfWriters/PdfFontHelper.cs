@@ -83,13 +83,49 @@ public partial class PdfWriter
             (false, false) => FontStyle.Regular
         };
 
-        var metrics = _fontRegistry.GetMetrics(fontFamily ?? "sans-serif", style, fontSizePt);
-        if (metrics == null || metrics.AdvanceWidths == null)
-            return text.Length * fontSizePt * 0.5f;
+        var family = fontFamily ?? "sans-serif";
+
+        // Try to get primary metrics (may have SixLabors real data or estimation)
+        var metrics = _fontRegistry.GetMetrics(family, style, fontSizePt);
 
         float total = 0;
-        foreach (char c in text)
-            total += GetCharAdvance(metrics, c);
+        char prev = default;
+        for (int i = 0; i < text.Length; i++)
+        {
+            char c = text[i];
+
+            // Per-glyph font fallback: try primary font first, then fallback chain
+            float charAdvance;
+            if (metrics != null && metrics.AdvanceWidths.TryGetValue(c, out var w))
+            {
+                charAdvance = w;
+            }
+            else
+            {
+                // Try fallback chain
+                var fbAdvance = _fontRegistry.GetCharAdvanceWithFallback(family, style, fontSizePt, c);
+                if (fbAdvance.HasValue)
+                {
+                    charAdvance = fbAdvance.Value;
+                }
+                else if (metrics != null)
+                {
+                    charAdvance = metrics.SizePoints * 0.5f;
+                }
+                else
+                {
+                    charAdvance = fontSizePt * 0.5f;
+                }
+            }
+
+            total += charAdvance;
+
+            // Apply kerning between consecutive non-space characters
+            if (i > 0 && prev != ' ' && c != ' ' && metrics?.KerningPairs.TryGetValue((prev, c), out var kern) == true)
+                total += kern;
+
+            prev = c;
+        }
         return total;
     }
 

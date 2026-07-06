@@ -61,6 +61,14 @@ public sealed class TextLayoutEngine : ITextLayoutEngine
                 char c = run.Text[i];
                 float charWidth = GetAdvanceWidth(metrics, c);
 
+                // Apply kerning between consecutive characters
+                if (i > 0)
+                {
+                    char prev = run.Text[i - 1];
+                    if (prev != ' ' && c != ' ' && metrics.KerningPairs.TryGetValue((prev, c), out var kern))
+                        charWidth += kern;
+                }
+
                 // Mandatory line breaks (BK/LF/CR/NL)
                 if (c == '\n' || c == '\r')
                 {

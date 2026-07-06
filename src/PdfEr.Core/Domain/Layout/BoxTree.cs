@@ -43,6 +43,21 @@ public sealed class LayoutBox
     public int ImagePixelWidth { get; set; }
     public int ImagePixelHeight { get; set; }
 
+    /// <summary>
+    /// colspan/rowspan for a box generated from &lt;td&gt;/&lt;th&gt; (Kind == TableCell).
+    /// Default 1, matching HTML's default when the attribute is absent.
+    /// </summary>
+    public int ColSpan { get; set; } = 1;
+    public int RowSpan { get; set; } = 1;
+
+    /// <summary>
+    /// Resolved column widths and grid metadata for a box generated from
+    /// &lt;table&gt; (Kind == Table). Populated by BlockPlacer.PlaceTable
+    /// (Phase 5, docs/plans/phase-05-tables.md) during Pass 2 placement --
+    /// null until then, and null for every other LayoutBoxKind.
+    /// </summary>
+    public TableGrid? Grid { get; set; }
+
     /// <summary>Populated by Pass 1 (intrinsic sizing), consumed by Pass 2 (placement).</summary>
     public IntrinsicSizes? Intrinsic { get; set; }
 
@@ -88,6 +103,22 @@ public readonly struct IntrinsicSizes
         MinContentWidth = minContentWidth;
         MaxContentWidth = maxContentWidth;
     }
+}
+
+/// <summary>
+/// Resolved column widths for a table box (CSS 2.1 §17.5), computed once by
+/// BlockPlacer.PlaceTable during Pass 2 (docs/plans/phase-05-tables.md) and
+/// attached to the Table-kind LayoutBox so descendant TableRow/TableCell
+/// placement can look up "which column am I in, how wide is it" without
+/// recomputing the whole-table algorithm per cell. Widths are in millimetres,
+/// content-box (border/padding handled separately per cell, same as any other box).
+/// </summary>
+public sealed class TableGrid
+{
+    public List<float> ColumnWidths { get; } = new();
+    public bool IsFixedLayout { get; set; }
+
+    public int ColumnCount => ColumnWidths.Count;
 }
 
 /// <summary>

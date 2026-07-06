@@ -363,6 +363,7 @@ public sealed class FontRegistry : IFontRegistry, IDisposable
         float scale = sizePoints / unitsPerEm;
 
         var advanceWidths = new Dictionary<char, float>(256);
+        var glyphCache = new Dictionary<char, SixLabors.Fonts.Glyph>(256);
         int charsPopulated = 0;
 
         // Common Unicode ranges: Basic Latin, Latin-1 Supplement
@@ -377,11 +378,29 @@ public sealed class FontRegistry : IFontRegistry, IDisposable
                     out var glyphs) || glyphs.Count == 0)
                 continue;
 
-            advanceWidths[(char)c] = glyphs[0].GlyphMetrics.AdvanceWidth * scale;
+            var g = glyphs[0];
+            advanceWidths[(char)c] = g.GlyphMetrics.AdvanceWidth * scale;
+            glyphCache[(char)c] = g;
             charsPopulated++;
         }
 
         if (charsPopulated == 0) return null;
+
+        // Extract kerning pairs for ASCII printable range (most common)
+        var kerningPairs = new Dictionary<(char, char), float>();
+        for (int i = 32; i <= 126 && i <= 255; i++)
+        {
+            if (!glyphCache.TryGetValue((char)i, out var leftG)) continue;
+            for (int j = 32; j <= 126 && j <= 255; j++)
+            {
+                if (!glyphCache.TryGetValue((char)j, out var rightG)) continue;
+                if (sixFont.TryGetKerningOffset(leftG, rightG, 72f, out var offset)
+                    && Math.Abs(offset.X) > 0.001f)
+                {
+                    kerningPairs[((char)i, (char)j)] = offset.X * scale;
+                }
+            }
+        }
 
         var hMetrics = fontMetrics.HorizontalMetrics;
         var ascender = hMetrics.Ascender * scale;
@@ -403,8 +422,38 @@ public sealed class FontRegistry : IFontRegistry, IDisposable
             UnderlineThickness = fontMetrics.UnderlineThickness * scale,
             StrikeoutPosition = fontMetrics.StrikeoutPosition * scale,
             StrikeoutThickness = fontMetrics.StrikeoutSize * scale,
-            AdvanceWidths = advanceWidths
+            AdvanceWidths = advanceWidths,
+            KerningPairs = kerningPairs
         };
+    }
+
+    public float? GetCharAdvanceWithFallback(string familyName, FontStyle style, float sizePoints, char c)
+    {
+        // Try primary font
+        var metrics = GetMetrics(familyName, style, sizePoints);
+        if (metrics != null && metrics.AdvanceWidths.TryGetValue(c, out var w))
+            return w;
+
+        // Try fallback chain (generic family names like sans-serif, serif, etc.)
+        if (_fallbackMap.TryGetValue(familyName, out var fallbacks))
+        {
+            foreach (var fb in fallbacks)
+            {
+                metrics = GetMetrics(fb, style, sizePoints);
+                if (metrics != null && metrics.AdvanceWidths.TryGetValue(c, out w))
+                    return w;
+            }
+        }
+
+        // Ultimate fallback: try each known fallback family
+        foreach (var fb in _fallbackMap.Values.SelectMany(v => v))
+        {
+            metrics = GetMetrics(fb, style, sizePoints);
+            if (metrics != null && metrics.AdvanceWidths.TryGetValue(c, out w))
+                return w;
+        }
+
+        return null;
     }
 
     private static SixLabors.Fonts.FontStyle ConvertToSixStyle(FontStyle style) => style switch
