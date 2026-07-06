@@ -76,8 +76,17 @@ tak ada line box sungguhan.
       benar-benar ikut aliran baris IFC (inline-block masih diperlakukan seperti block
       biasa di percabangan utama `Place`, bukan sebagai atomic inline item di
       `PlaceInlineContent`/`CollectInlineItems`).
-- [ ] **`white-space`**: `normal | nowrap | pre | pre-wrap | pre-line` — belum
-      dikerjakan; `PlaceInlineContent` selalu berperilaku seperti `normal`.
+- [~] **`white-space`**: **`normal`** (default) dan **`nowrap`** (menekan wrap
+      berbasis lebar, tapi `<br>` tetap memaksa baris baru) dan **`pre-line`**
+      (`\n` di source dipertahankan sebagai forced break, tapi runs spasi lain
+      tetap collapse) sudah diimplementasikan di `PlaceInlineContent`/
+      `CollectInlineItems`. **`pre`/`pre-wrap` belum** — keduanya butuh
+      mempertahankan whitespace mentah (spasi berulang, tab) di `Text` box,
+      yang berarti `CollectInlineItems` perlu berhenti membelah teks jadi
+      "kata" untuk kasus itu (perubahan lebih besar ke model `InlineItem`,
+      bukan sekadar flag). Diverifikasi 4 unit test (`nowrap` tidak wrap
+      meski sempit, `nowrap` tetap patuh `<br>`, `pre-line` mempertahankan
+      newline, `pre-line` tetap collapse spasi berulang).
 - [x] **`text-align`** termasuk **`justify`** (distribusi ruang antar-kata, baris
       terakhir tidak di-justify sesuai CSS 2.1 §16.2) & centering/right — diverifikasi
       lewat 5 unit test (`Place_TextAlignLeft/Right/Center/Justify_*`) + harness
@@ -109,7 +118,7 @@ tak ada line box sungguhan.
 - Paragraf multi-baris membungkus di titik yang sama dengan Chrome (untuk font yang sama).
   ✅ diverifikasi (SSIM 0.9998 pada kasus wrap paksa).
 
-## Progres nyata (5 sesi)
+## Progres nyata (6 sesi)
 
 **Sesi 1**: `box-sizing` (content-box/border-box) dan `text-align` (left/right/center/
 justify) ditambahkan ke `BlockPlacer`. Keduanya diverifikasi dobel: unit test dengan
@@ -162,6 +171,20 @@ dibiarkan uncommitted di working tree, jadi commit sesi ini **hanya** mencakup
 belum dijalankan karena bergantung pada `PdfWriter` yang sedang tidak stabil;
 menyusul di sesi berikutnya.
 
-**Belum dikerjakan**: vertical-align, inline-block sebagai atomic inline item
-sungguhan, white-space, text-transform/text-decoration, overflow, margin collapsing
+**Sesi 6**: `white-space: nowrap` dan `pre-line`. `nowrap` menekan keputusan wrap
+berbasis lebar di loop greedy-wrap tapi tetap patuh `ForcedBreak` (`<br>`);
+`pre-line` mempertahankan `\n` di source sebagai forced break saat mem-flatten
+`Text` box ke `InlineItem` (runs spasi/tab lain tetap collapse, sesuai spec).
+4 test baru — 282/282 `PdfEr.Core.Tests` stabil 3x run. **Catatan proses sama
+seperti Sesi 5**: `PdfEr.Infrastructure` masih broken akibat pekerjaan konkuren
+font-metrics (kali ini di `FontRegistry.cs`, API `SixLabors.Fonts` yang belum
+cocok) — commit sesi ini tetap dibatasi hanya ke `BlockPlacer.cs` + test,
+diverifikasi lewat build **`PdfEr.Core`+`PdfEr.Core.Tests` saja** (keduanya
+tidak bergantung ke `PdfEr.Infrastructure`, jadi bisa dibangun & diuji terisolasi
+sementara Infrastructure belum stabil). Harness fidelity & Infrastructure/
+Integration menyusul begitu build penuh hijau lagi.
+
+**Belum dikerjakan**: `white-space: pre`/`pre-wrap` (butuh pelestarian whitespace
+mentah, perubahan lebih besar), vertical-align, inline-block sebagai atomic inline
+item sungguhan, text-transform/text-decoration, overflow, margin collapsing
 parent/child. Fase 2 berlanjut, jauh dari selesai.

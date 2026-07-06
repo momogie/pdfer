@@ -60,6 +60,25 @@ public class BlockPlacerLineBreakingTests
         return box;
     }
 
+    private static LayoutBox AnonymousBlockWithWhiteSpace(string whiteSpace, params LayoutBox[] children)
+    {
+        var decl = new CssDeclarationBlock();
+        decl.SetProperty("white-space", whiteSpace);
+        var box = new LayoutBox { Kind = LayoutBoxKind.Anonymous, IsAnonymous = true, Style = ComputedStyle.Resolve(decl) };
+        foreach (var child in children)
+            box.AddChild(child);
+        return box;
+    }
+
+    private static LayoutBox TextBoxWithWhiteSpace(string text, string whiteSpace)
+    {
+        var decl = new CssDeclarationBlock();
+        decl.SetProperty("white-space", whiteSpace);
+        var box = new LayoutBox { Kind = LayoutBoxKind.Text, TextContent = text, Style = ComputedStyle.Resolve(decl) };
+        box.Intrinsic = new IntrinsicSizes(0, 0);
+        return box;
+    }
+
     private static List<LayoutBox> TextLinesOf(LayoutBox box) =>
         box.Children.Where(c => c.Kind == LayoutBoxKind.Text).ToList();
 
@@ -295,6 +314,68 @@ public class BlockPlacerLineBreakingTests
 
         var line = TextLinesOf(box).Single();
         Assert.Equal(5, line.Geometry.X, 2); // 10 (start x) - 5mm indent
+    }
+
+    [Fact]
+    public void Place_WhiteSpaceNowrap_DoesNotWrapEvenWhenTooWide()
+    {
+        var registry = FakeRegistryWithFixedAdvance(5f);
+        var placer = new BlockPlacer(registry);
+        var box = AnonymousBlockWithWhiteSpace("nowrap", TextBox("alpha bravo charlie delta echo"));
+
+        placer.Place(box, new ContainingBlock(15, 0, false), 0, 0);
+
+        var lines = TextLinesOf(box);
+        var distinctYs = lines.Select(l => l.Geometry.Y).Distinct().Count();
+        Assert.Equal(1, distinctYs); // everything stays on one line despite the narrow container
+    }
+
+    [Fact]
+    public void Place_WhiteSpaceNowrap_StillBreaksOnExplicitLineBreak()
+    {
+        var registry = FakeRegistryWithFixedAdvance(5f);
+        var placer = new BlockPlacer(registry);
+        var lineBreak = new LayoutBox { Kind = LayoutBoxKind.LineBreak, Style = ComputedStyle.Resolve(new CssDeclarationBlock()) };
+        var box = AnonymousBlockWithWhiteSpace("nowrap", TextBox("short"), lineBreak, TextBox("text"));
+
+        placer.Place(box, new ContainingBlock(500, 0, false), 0, 0);
+
+        var lines = TextLinesOf(box);
+        var distinctYs = lines.Select(l => l.Geometry.Y).Distinct().Count();
+        Assert.Equal(2, distinctYs); // <br> still forces a break under nowrap
+    }
+
+    [Fact]
+    public void Place_WhiteSpacePreLine_PreservesSourceNewlinesAsForcedBreaks()
+    {
+        var registry = FakeRegistryWithFixedAdvance(5f);
+        var placer = new BlockPlacer(registry);
+        var text = TextBoxWithWhiteSpace("line one\nline two", "pre-line");
+        var box = AnonymousBlock(text);
+
+        // Wide enough that width-based wrapping would never kick in on its own.
+        placer.Place(box, new ContainingBlock(500, 0, false), 0, 0);
+
+        var lines = TextLinesOf(box);
+        var distinctYs = lines.Select(l => l.Geometry.Y).Distinct().Count();
+        Assert.Equal(2, distinctYs); // the \n forced a break even though it fits on one line
+    }
+
+    [Fact]
+    public void Place_WhiteSpacePreLine_StillCollapsesRunsOfSpaces()
+    {
+        var registry = FakeRegistryWithFixedAdvance(5f);
+        var placer = new BlockPlacer(registry);
+        // Multiple spaces between words should still collapse to a single gap
+        // under pre-line -- only newlines are special-cased.
+        var text = TextBoxWithWhiteSpace("hi   there", "pre-line");
+        var box = AnonymousBlock(text);
+
+        placer.Place(box, new ContainingBlock(500, 0, false), 0, 0);
+
+        var lines = TextLinesOf(box);
+        Assert.Equal(2, lines.Count); // "hi" and "there" as two separate word items
+        Assert.Single(lines.Select(l => l.Geometry.Y).Distinct()); // both on the same line
     }
 
     [Fact]

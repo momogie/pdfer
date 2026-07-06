@@ -279,6 +279,13 @@ public sealed class BlockPlacer
         var maxWidth = Math.Max(0, containingBlock.Width);
         var spaceWidthMm = items.Count > 0 ? items[0].Style.FontSizeMm * 0.28f : 0; // approx space width
 
+        // CSS 2.1 16.6 "white-space: nowrap/pre": suppresses width-based wrapping
+        // entirely -- lines only break on a ForcedBreak (<br> or, for "pre", a
+        // literal newline once CollectInlineItems preserves raw whitespace,
+        // which is a separate, not-yet-implemented change).
+        var whiteSpaceContainer = box.Style.GetPropertyValue("white-space")?.Trim().ToLowerInvariant();
+        bool suppressWrap = whiteSpaceContainer is "nowrap" or "pre";
+
         // CSS 2.1 16.1 "text-indent": shifts the first formatted line only.
         // Negative values are allowed (outdent); resolves against the
         // containing block width for percentages, same as ResolveExplicitLength.
@@ -302,7 +309,7 @@ public sealed class BlockPlacer
             }
 
             var neededWidth = item.WidthMm + (currentLine.Count > 0 ? spaceWidthMm : 0);
-            if (currentLine.Count > 0 && currentLineWidth + neededWidth > currentLineMaxWidth)
+            if (!suppressWrap && currentLine.Count > 0 && currentLineWidth + neededWidth > currentLineMaxWidth)
             {
                 lines.Add(currentLine);
                 currentLine = new List<InlineItem>();
@@ -425,8 +432,28 @@ public sealed class BlockPlacer
         {
             case LayoutBoxKind.Text:
                 var text = box.TextContent ?? "";
-                foreach (var word in text.Split(new[] { ' ', '\t', '\n' }, StringSplitOptions.RemoveEmptyEntries))
-                    items.Add(new InlineItem(InlineItemKind.Word, word, MeasureWordWidthMm(word, box.Style), box.Style, null));
+                var whiteSpace = box.Style.GetPropertyValue("white-space")?.Trim().ToLowerInvariant();
+
+                if (whiteSpace is "pre-line")
+                {
+                    // CSS2.1 16.6: newlines in the source are preserved as forced
+                    // breaks, but runs of other whitespace still collapse (words
+                    // are still split/measured the same as "normal").
+                    var linesOfText = text.Split('\n');
+                    for (int li = 0; li < linesOfText.Length; li++)
+                    {
+                        if (li > 0)
+                            items.Add(new InlineItem(InlineItemKind.ForcedBreak, "", 0, box.Style, null));
+
+                        foreach (var word in linesOfText[li].Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries))
+                            items.Add(new InlineItem(InlineItemKind.Word, word, MeasureWordWidthMm(word, box.Style), box.Style, null));
+                    }
+                }
+                else
+                {
+                    foreach (var word in text.Split(new[] { ' ', '\t', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+                        items.Add(new InlineItem(InlineItemKind.Word, word, MeasureWordWidthMm(word, box.Style), box.Style, null));
+                }
                 break;
 
             case LayoutBoxKind.Image:
