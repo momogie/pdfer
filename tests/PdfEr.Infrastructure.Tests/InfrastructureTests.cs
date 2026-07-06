@@ -652,7 +652,7 @@ public sealed class PdfWriterWriteDocumentLayoutTests
         var pdf = writer.WriteDocumentLayout(layout, DefaultConfig);
         var stream = GetContentStream(pdf);
 
-        Assert.Contains("re S", stream);
+        Assert.Contains("l S", stream);
         Assert.Contains("RG", stream);
     }
 

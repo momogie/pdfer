@@ -249,16 +249,91 @@ public sealed class PdfConverterService : IPdfConverter
                     }
 
                     // For flex/grid containers, layout before walking children
-                    bool isFlex = resolved?.GetPropertyValue("display") is "flex" or "inline-flex" or "grid" or "inline-grid";
-                    if (isFlex && context.CurrentBlock != null)
+                    var display = resolved?.GetPropertyValue("display");
+                    bool isFlex = display is "flex" or "inline-flex";
+                    bool isGrid = display is "grid" or "inline-grid";
+                    bool isFlexOrGrid = isFlex || isGrid;
+
+                    // Track positioned containing blocks for absolute child placement
+                    var cssPosition = resolved?.GetPropertyValue("position");
+                    bool isPositioned = cssPosition is "relative" or "absolute" or "fixed" or "sticky";
+
+                    if (isFlexOrGrid && context.CurrentBlock != null)
                     {
                         _layoutEngine.LayoutBlock(context.CurrentBlock, _currentConfig);
+                    }
+
+                    // Parse flex/grid child properties before walking children
+                    if (!isFlexOrGrid && _layoutEngine.CurrentFlexContainer != null && context.CurrentBlock != null)
+                    {
+                        var flexParent = _layoutEngine.CurrentFlexContainer;
+                        if (context.CurrentBlock != flexParent)
+                        {
+                            var childStyle = context.CurrentBlock.ComputedStyle;
+                            if (childStyle != null)
+                            {
+                                var grow = childStyle.GetPropertyValue("flex-grow");
+                                if (!string.IsNullOrWhiteSpace(grow) && float.TryParse(grow, out var g))
+                                    context.CurrentBlock.FlexGrow = g;
+                                var shrink = childStyle.GetPropertyValue("flex-shrink");
+                                if (!string.IsNullOrWhiteSpace(shrink) && float.TryParse(shrink, out var s))
+                                    context.CurrentBlock.FlexShrink = s;
+                                var basis = childStyle.GetPropertyValue("flex-basis");
+                                if (!string.IsNullOrWhiteSpace(basis) && basis != "auto")
+                                {
+                                    context.CurrentBlock.FlexBasisIsAuto = false;
+                                    context.CurrentBlock.FlexBasis = CssLengthParser.ParseCssLengthMm(basis,
+                                        flexParent.ContentWidth > 0 ? flexParent.ContentWidth : CurrentPage.ContentBox.Width);
+                                }
+                                var order = childStyle.GetPropertyValue("order");
+                                if (!string.IsNullOrWhiteSpace(order) && int.TryParse(order, out var o))
+                                    context.CurrentBlock.Order = o;
+                                var alignSelf = childStyle.GetPropertyValue("align-self");
+                                if (!string.IsNullOrWhiteSpace(alignSelf) && alignSelf != "auto")
+                                    context.CurrentBlock.AlignSelf = alignSelf;
+                                var gcs = childStyle.GetPropertyValue("grid-column-start");
+                                if (!string.IsNullOrWhiteSpace(gcs) && int.TryParse(gcs, out var gcsVal))
+                                    context.CurrentBlock.GridColumnStart = gcsVal;
+                                var gce = childStyle.GetPropertyValue("grid-column-end");
+                                if (!string.IsNullOrWhiteSpace(gce) && int.TryParse(gce, out var gceVal))
+                                    context.CurrentBlock.GridColumnEnd = gceVal;
+                                var grs = childStyle.GetPropertyValue("grid-row-start");
+                                if (!string.IsNullOrWhiteSpace(grs) && int.TryParse(grs, out var grsVal))
+                                    context.CurrentBlock.GridRowStart = grsVal;
+                                var gre = childStyle.GetPropertyValue("grid-row-end");
+                                if (!string.IsNullOrWhiteSpace(gre) && int.TryParse(gre, out var greVal))
+                                    context.CurrentBlock.GridRowEnd = greVal;
+                            }
+                        }
+                    }
+
+                    // Push positioned containing block before walking children
+                    if (isPositioned && context.CurrentBlock != null)
+                    {
+                        var box = context.CurrentBlock;
+                        float cbX, cbY, cbW, cbH;
+                        if (isFlexOrGrid)
+                        {
+                            cbX = box.X + box.PaddingLeft + box.BorderLeft;
+                            cbY = box.Y + box.PaddingTop + box.BorderTop;
+                        }
+                        else
+                        {
+                            cbX = box.X + box.PaddingLeft + box.BorderLeft;
+                            cbY = _layoutEngine.CurrentY + box.PaddingTop + box.BorderTop;
+                        }
+                        cbW = box.ContentWidth > 0 ? box.ContentWidth : CurrentPage.ContentBox.Width;
+                        cbH = box.Height > 0 ? box.ContentHeight : CurrentPage.ContentBox.Height;
+                        _layoutEngine.PushPositionedContainingBlock(cbX, cbY, cbW, cbH);
                     }
 
                     if (tagName is not "td" and not "th" and not "svg")
                         WalkDom(el, resolved);
 
-                    if (!isFlex && context.CurrentBlock != null)
+                    if (isPositioned && context.CurrentBlock != null)
+                        _layoutEngine.PopPositionedContainingBlock();
+
+                    if (!isFlexOrGrid && context.CurrentBlock != null)
                     {
                         _layoutEngine.LayoutBlock(context.CurrentBlock, _currentConfig);
                     }
@@ -269,7 +344,7 @@ public sealed class PdfConverterService : IPdfConverter
                         _layoutEngine.PositionFlexChild(context.CurrentBlock);
                     }
 
-                    if (isFlex)
+                    if (isFlexOrGrid)
                     {
                         _layoutEngine.EndFlexContainer();
                     }

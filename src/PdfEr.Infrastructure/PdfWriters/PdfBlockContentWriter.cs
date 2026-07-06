@@ -100,14 +100,7 @@ public partial class PdfWriter
                 }
             }
 
-            // Clipping path for overflow hidden
-            if (clipContent)
-            {
-                sb.AppendLine("q");
-                sb.AppendLine($"{rectLeftPt:F2} {rectBottomPt:F2} {rectWidthPt:F2} {rectHeightPt:F2} re W n");
-            }
-
-            // Box-shadow
+            // Box-shadow (drawn before clip so it's not clipped)
             string? boxShadow = style?.GetPropertyValue("box-shadow");
             if (!string.IsNullOrWhiteSpace(boxShadow) && boxShadow != "none")
             {
@@ -142,6 +135,17 @@ public partial class PdfWriter
                             sb.AppendLine("/GS_1_0 gs");
                     }
                 }
+            }
+
+            // Clipping path for overflow hidden and/or border-radius (applies to background and content)
+            bool needClip = clipContent || borderRadiusPt > 0;
+            if (needClip)
+            {
+                sb.AppendLine("q");
+                if (borderRadiusPt > 0)
+                    AppendRoundedRectPath(sb, rectLeftPt, rectBottomPt, rectWidthPt, rectHeightPt, borderRadiusPt, "W n");
+                else
+                    sb.AppendLine($"{rectLeftPt:F2} {rectBottomPt:F2} {rectWidthPt:F2} {rectHeightPt:F2} re W n");
             }
 
             // Background-image support
@@ -189,51 +193,27 @@ public partial class PdfWriter
             {
                 if (colorParser.TryParse(bgColorVal, out var docColor) && docColor is RgbColor bgRgb && bgRgb.A > 0)
                 {
+                    float bgAlpha = bgRgb.A / 255f;
+                    if (bgAlpha < 1f)
+                    {
+                        float aRounded = MathF.Round(bgAlpha * 10f) / 10f;
+                        string aGsName = $"/GS_{aRounded:F1}".Replace(".", "_");
+                        if (!usedOpacities!.Contains(aRounded))
+                            usedOpacities.Add(aRounded);
+                        sb.AppendLine($"{aGsName} gs");
+                    }
                     sb.AppendLine($"{bgRgb.R / 255f:F2} {bgRgb.G / 255f:F2} {bgRgb.B / 255f:F2} rg");
                     if (borderRadiusPt > 0)
                         AppendRoundedRectPath(sb, rectLeftPt, rectBottomPt, rectWidthPt, rectHeightPt, borderRadiusPt, "f");
                     else
                         sb.AppendLine($"{rectLeftPt:F2} {rectBottomPt:F2} {rectWidthPt:F2} {rectHeightPt:F2} re f");
+                    if (bgAlpha < 1f)
+                        sb.AppendLine("/GS_1_0 gs");
                 }
             }
 
             if (hasBorders)
-            {
-                float br = 0, bg = 0, bb = 0;
-                if (style != null)
-                {
-                    var bColor = style.GetPropertyValue("border-color");
-                    if (!string.IsNullOrWhiteSpace(bColor) && bColor != "transparent")
-                    {
-                        if (colorParser.TryParse(bColor, out var bDocColor) && bDocColor is RgbColor bRgb)
-                        {
-                            br = bRgb.R / 255f; bg = bRgb.G / 255f; bb = bRgb.B / 255f;
-                        }
-                    }
-                }
-                sb.AppendLine($"{br:F2} {bg:F2} {bb:F2} RG");
-
-                float bwPt = Math.Max(block.BorderTop, Math.Max(block.BorderBottom, Math.Max(block.BorderLeft, block.BorderRight))) * MmToPt;
-                sb.AppendLine($"{bwPt:F2} w");
-
-                // Border style (dashed/dotted)
-                string? borderStyle = style?.GetPropertyValue("border-style");
-                if (borderStyle is "dashed" or "dotted")
-                {
-                    float dashLen = borderStyle == "dashed" ? bwPt * 3f : bwPt;
-                    float gapLen = borderStyle == "dashed" ? bwPt * 2f : bwPt * 2f;
-                    sb.AppendLine($"[{dashLen:F2} {gapLen:F2}] 0 d");
-                }
-
-                if (borderRadiusPt > 0)
-                    AppendRoundedRectPath(sb, rectLeftPt, rectBottomPt, rectWidthPt, rectHeightPt, borderRadiusPt, "S");
-                else
-                    sb.AppendLine($"{rectLeftPt:F2} {rectBottomPt:F2} {rectWidthPt:F2} {rectHeightPt:F2} re S");
-
-                // Reset dash pattern if changed
-                if (borderStyle is "dashed" or "dotted")
-                    sb.AppendLine("[] 0 d");
-            }
+                DrawBorders(sb, block, style, rectLeftPt, rectBottomPt, rectWidthPt, rectHeightPt, borderRadiusPt, colorParser);
 
             var fontIdx = ResolveFontIndex(fontFamily, bold, italic);
             if (!usedFonts.Contains(fontIdx))
@@ -357,8 +337,8 @@ public partial class PdfWriter
                 }
             }
 
-            // Close overflow clip if applied
-            if (clipContent)
+            // Close clip (overflow and/or border-radius)
+            if (needClip)
                 sb.AppendLine("Q");
         }
 
@@ -371,6 +351,207 @@ public partial class PdfWriter
         _buffer.AppendLine("endstream");
         _buffer.AppendLine("endobj");
         return num;
+    }
+
+    private readonly struct BorderRadii
+    {
+        public float TopLeft { get; }
+        public float TopRight { get; }
+        public float BottomRight { get; }
+        public float BottomLeft { get; }
+
+        public BorderRadii(float uniform)
+        {
+            TopLeft = TopRight = BottomRight = BottomLeft = uniform;
+        }
+
+        public BorderRadii(float tl, float tr, float br, float bl)
+        {
+            TopLeft = tl; TopRight = tr; BottomRight = br; BottomLeft = bl;
+        }
+
+        public static BorderRadii Parse(CssDeclarationBlock? style, float mmToPt)
+        {
+            if (style == null) return new BorderRadii(0);
+
+            var val = style.GetPropertyValue("border-radius");
+            if (string.IsNullOrWhiteSpace(val)) return new BorderRadii(0);
+
+            val = val.Trim().ToLowerInvariant();
+            var parts = val.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+            float Parse(string v) => v switch
+            {
+                string s when s.EndsWith("mm") && float.TryParse(s[..^2], out var mm) => mm * mmToPt,
+                string s when s.EndsWith("pt") && float.TryParse(s[..^2], out var pt) => pt,
+                string s when s.EndsWith("px") && float.TryParse(s[..^2], out var px) => px * 0.75f,
+                string s when s.EndsWith("em") && float.TryParse(s[..^2], out var em) => em * 12f,
+                string s when float.TryParse(s, out var raw) => raw * mmToPt,
+                _ => 0
+            };
+
+            if (parts.Length == 1) return new BorderRadii(Parse(parts[0]));
+            if (parts.Length == 2)
+            {
+                float tlbr = Parse(parts[0]), trbl = Parse(parts[1]);
+                return new BorderRadii(tlbr, trbl, tlbr, trbl);
+            }
+            if (parts.Length == 3)
+                return new BorderRadii(Parse(parts[0]), Parse(parts[1]), Parse(parts[2]), Parse(parts[1]));
+            if (parts.Length >= 4)
+                return new BorderRadii(Parse(parts[0]), Parse(parts[1]), Parse(parts[3]), Parse(parts[2]));
+            return new BorderRadii(0);
+        }
+    }
+
+    private void DrawBorders(StringBuilder sb, BlockBox block, CssDeclarationBlock? style,
+        float rectLeftPt, float rectBottomPt, float rectWidthPt, float rectHeightPt,
+        float borderRadiusPt, ColorParser colorParser)
+    {
+        float ParseColor(string? val, out float r, out float g, out float b)
+        {
+            r = g = b = 0;
+            if (string.IsNullOrWhiteSpace(val) || val == "transparent") return 0;
+            if (!colorParser.TryParse(val, out var docColor) || docColor is not RgbColor rgb) return 0;
+            if (rgb.A == 0) return 0;
+            r = rgb.R / 255f; g = rgb.G / 255f; b = rgb.B / 255f;
+            return rgb.A / 255f;
+        }
+
+        // Parse per-side colors and styles (default to currentColor = the element's color or black)
+        string? currentColor = style?.GetPropertyValue("color");
+        if (string.IsNullOrWhiteSpace(currentColor) || currentColor == "transparent" || currentColor == "rgba(0, 0, 0, 0)")
+            currentColor = "black";
+
+        string? borderColor = style?.GetPropertyValue("border-color");
+        string? topColor = style?.GetPropertyValue("border-top-color") ?? borderColor ?? currentColor;
+        string? rightColor = style?.GetPropertyValue("border-right-color") ?? borderColor ?? currentColor;
+        string? bottomColor = style?.GetPropertyValue("border-bottom-color") ?? borderColor ?? currentColor;
+        string? leftColor = style?.GetPropertyValue("border-left-color") ?? borderColor ?? currentColor;
+
+        string? topStyle = style?.GetPropertyValue("border-top-style") ?? style?.GetPropertyValue("border-style") ?? "solid";
+        string? rightStyle = style?.GetPropertyValue("border-right-style") ?? style?.GetPropertyValue("border-style") ?? "solid";
+        string? bottomStyle = style?.GetPropertyValue("border-bottom-style") ?? style?.GetPropertyValue("border-style") ?? "solid";
+        string? leftStyle = style?.GetPropertyValue("border-left-style") ?? style?.GetPropertyValue("border-style") ?? "solid";
+
+        float topW = block.BorderTop * MmToPt;
+        float rightW = block.BorderRight * MmToPt;
+        float bottomW = block.BorderBottom * MmToPt;
+        float leftW = block.BorderLeft * MmToPt;
+
+        bool allSameColor = topColor == rightColor && rightColor == bottomColor && bottomColor == leftColor;
+        bool allSameStyle = topStyle == rightStyle && rightStyle == bottomStyle && bottomStyle == leftStyle;
+        bool allSameWidth = Math.Abs(topW - rightW) < 0.001f && Math.Abs(rightW - bottomW) < 0.001f && Math.Abs(bottomW - leftW) < 0.001f;
+
+        if (allSameColor && allSameStyle && allSameWidth && borderRadiusPt == 0 && topW > 0)
+        {
+            // Fast path: uniform border, no radius — single rect outline
+            var fastAlpha = ParseColor(topColor, out var br, out var bg, out var bb);
+            if (fastAlpha == 0) return;
+            sb.AppendLine($"{br:F2} {bg:F2} {bb:F2} RG");
+
+            float bwPt = Math.Max(topW, Math.Max(bottomW, Math.Max(leftW, rightW)));
+            sb.AppendLine($"{bwPt:F2} w");
+            SetDashPattern(sb, topStyle, bwPt);
+            sb.AppendLine($"{rectLeftPt:F2} {rectBottomPt:F2} {rectWidthPt:F2} {rectHeightPt:F2} re S");
+            ResetDashPattern(sb, topStyle);
+            return;
+        }
+
+        // Per-side border drawing
+        string? borderStyle = style?.GetPropertyValue("border-style") ?? "solid";
+        float maxW = Math.Max(topW, Math.Max(bottomW, Math.Max(leftW, rightW)));
+
+        // Top edge
+        DrawBorderSide(sb, topStyle ?? borderStyle, topColor, rectLeftPt, rectBottomPt + rectHeightPt - topW / 2f,
+            rectLeftPt + rectWidthPt, rectBottomPt + rectHeightPt - topW / 2f, topW, colorParser);
+
+        // Bottom edge
+        DrawBorderSide(sb, bottomStyle ?? borderStyle, bottomColor, rectLeftPt, rectBottomPt + bottomW / 2f,
+            rectLeftPt + rectWidthPt, rectBottomPt + bottomW / 2f, bottomW, colorParser);
+
+        // Left edge
+        DrawBorderSide(sb, leftStyle ?? borderStyle, leftColor, rectLeftPt + leftW / 2f, rectBottomPt,
+            rectLeftPt + leftW / 2f, rectBottomPt + rectHeightPt, leftW, colorParser);
+
+        // Right edge
+        DrawBorderSide(sb, rightStyle ?? borderStyle, rightColor, rectLeftPt + rectWidthPt - rightW / 2f, rectBottomPt,
+            rectLeftPt + rectWidthPt - rightW / 2f, rectBottomPt + rectHeightPt, rightW, colorParser);
+
+        // Corner fill: draw small rectangles at corners where adjacent sides meet
+        if (topW > 0 && leftW > 0)
+            FillCorner(sb, topColor, leftColor, rectLeftPt, rectBottomPt + rectHeightPt, leftW, topW, colorParser);
+        if (topW > 0 && rightW > 0)
+            FillCorner(sb, topColor, rightColor, rectLeftPt + rectWidthPt - rightW, rectBottomPt + rectHeightPt, rightW, topW, colorParser);
+        if (bottomW > 0 && leftW > 0)
+            FillCorner(sb, bottomColor, leftColor, rectLeftPt, rectBottomPt, leftW, bottomW, colorParser);
+        if (bottomW > 0 && rightW > 0)
+            FillCorner(sb, bottomColor, rightColor, rectLeftPt + rectWidthPt - rightW, rectBottomPt, rightW, bottomW, colorParser);
+    }
+
+    private void DrawBorderSide(StringBuilder sb, string? style, string? color,
+        float x1, float y1, float x2, float y2, float width, ColorParser colorParser)
+    {
+        if (width <= 0 || string.IsNullOrWhiteSpace(color) || color == "transparent") return;
+
+        ParseColorValue(color, colorParser, out var r, out var g, out var b, out var a);
+        if (a == 0) return;
+
+        if (style is "none" or "hidden") return;
+
+        sb.AppendLine($"{r:F2} {g:F2} {b:F2} RG");
+        sb.AppendLine($"{width:F2} w");
+        SetDashPattern(sb, style, width);
+        sb.AppendLine($"{x1:F2} {y1:F2} m {x2:F2} {y2:F2} l S");
+        ResetDashPattern(sb, style);
+    }
+
+    private static void SetDashPattern(StringBuilder sb, string? style, float width)
+    {
+        if (style is "dashed")
+        {
+            float dashLen = Math.Max(1, width * 3f);
+            float gapLen = Math.Max(1, width * 2f);
+            sb.AppendLine($"[{dashLen:F2} {gapLen:F2}] 0 d");
+        }
+        else if (style is "dotted")
+        {
+            float dotLen = Math.Max(0.5f, width);
+            float gapLen = Math.Max(0.5f, width * 2f);
+            sb.AppendLine($"[{dotLen:F2} {gapLen:F2}] 0 d");
+        }
+        else if (style is "double")
+        {
+            // Double border not directly supported via dash pattern; draw two lines
+            sb.AppendLine("[] 0 d");
+        }
+    }
+
+    private static void ResetDashPattern(StringBuilder sb, string? style)
+    {
+        if (style is "dashed" or "dotted")
+            sb.AppendLine("[] 0 d");
+    }
+
+    private static void FillCorner(StringBuilder sb, string? colorH, string? colorV,
+        float x, float y, float w, float h, ColorParser colorParser)
+    {
+        // For diagonal corners, fill with the more visible color
+        ParseColorValue(colorH ?? colorV, colorParser, out var r, out var g, out var b, out var a);
+        if (a == 0) return;
+        sb.AppendLine($"{r:F2} {g:F2} {b:F2} rg");
+        sb.AppendLine($"{x:F2} {y:F2} {w:F2} {h:F2} re f");
+    }
+
+    private static void ParseColorValue(string? val, ColorParser parser,
+        out float r, out float g, out float b, out float a)
+    {
+        r = g = b = 0; a = 0;
+        if (string.IsNullOrWhiteSpace(val) || val == "transparent") return;
+        if (!parser.TryParse(val, out var docColor) || docColor is not RgbColor rgb) return;
+        a = rgb.A / 255f;
+        if (a == 0) return;
+        r = rgb.R / 255f; g = rgb.G / 255f; b = rgb.B / 255f;
     }
 
     private static float ParseShadowLength(string value)

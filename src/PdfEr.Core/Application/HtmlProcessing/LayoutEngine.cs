@@ -27,6 +27,31 @@ public sealed class LayoutEngine
     private float _flexChildStartX;
     private float _flexRowMaxHeight;
     private int _gridColumnIndex;
+    private int _gridRowIndex;
+    private float _gridRowStartY;
+
+    // Float tracking state
+    private readonly List<FloatRegion> _floatRegions = new();
+
+    // Positioned containing block stack
+    private readonly Stack<PositionedContainingBlock> _positionedContainingBlocks = new();
+
+    private struct FloatRegion
+    {
+        public float X;
+        public float Y;
+        public float Width;
+        public float Height;
+        public string Side;
+    }
+
+    private struct PositionedContainingBlock
+    {
+        public float X;
+        public float Y;
+        public float Width;
+        public float Height;
+    }
 
     public LayoutEngine(CssMerger cssMerger, CssNormalizer cssNormalizer, IUnitConverter unitConverter, IFontRegistry? fontRegistry = null)
     {
@@ -209,21 +234,29 @@ public sealed class LayoutEngine
             box.FlexDirection = box.ComputedStyle?.GetPropertyValue("flex-direction") ?? "row";
             box.JustifyContent = box.ComputedStyle?.GetPropertyValue("justify-content") ?? "flex-start";
             box.AlignItems = box.ComputedStyle?.GetPropertyValue("align-items") ?? "stretch";
+            box.AlignContent = box.ComputedStyle?.GetPropertyValue("align-content") ?? "stretch";
             box.FlexWrap = box.ComputedStyle?.GetPropertyValue("flex-wrap") ?? "nowrap";
 
-            var gap = box.ComputedStyle?.GetPropertyValue("gap") ?? box.ComputedStyle?.GetPropertyValue("column-gap");
-            if (!string.IsNullOrWhiteSpace(gap) && gap != "normal")
-                box.FlexGap = ParseCssLength(gap, _currentPage.ContentBox.Width);
-
+            var colGap = box.ComputedStyle?.GetPropertyValue("column-gap") ?? box.ComputedStyle?.GetPropertyValue("gap");
+            if (!string.IsNullOrWhiteSpace(colGap) && colGap != "normal")
+                box.FlexGap = ParseCssLength(colGap, _currentPage.ContentBox.Width);
             var rowGap = box.ComputedStyle?.GetPropertyValue("row-gap") ?? box.ComputedStyle?.GetPropertyValue("gap");
             if (!string.IsNullOrWhiteSpace(rowGap) && rowGap != "normal")
+            {
                 box.GridRowGap = ParseCssLength(rowGap, _currentPage.ContentBox.Height);
+                box.GridColumnGap = box.FlexGap;
+            }
 
             if (isGrid)
             {
-                var template = box.ComputedStyle?.GetPropertyValue("grid-template-columns");
+                var templateCols = box.ComputedStyle?.GetPropertyValue("grid-template-columns");
                 var availableWidth = box.ContentWidth > 0 ? box.ContentWidth : _currentPage.ContentBox.Width;
-                box.GridColumnWidths = ParseGridTemplateColumns(template, availableWidth, box.FlexGap);
+                box.GridColumnWidths = ParseGridTemplateColumns(templateCols, availableWidth, box.FlexGap);
+
+                var templateRows = box.ComputedStyle?.GetPropertyValue("grid-template-rows");
+                box.GridRowHeights = ParseGridTemplateColumns(templateRows, _currentPage.ContentBox.Height, box.GridRowGap);
+
+                box.GridAutoFlow = box.ComputedStyle?.GetPropertyValue("grid-auto-flow") ?? "row";
             }
 
             _currentY += box.MarginTop;
@@ -353,8 +386,10 @@ public sealed class LayoutEngine
 
             // CSS float support
             var cssFloat = box.ComputedStyle?.GetPropertyValue("float");
+            box.Clear = box.ComputedStyle?.GetPropertyValue("clear");
             if (!string.IsNullOrWhiteSpace(cssFloat) && cssFloat != "none")
             {
+                box.Y = _currentY;
                 if (cssFloat == "left")
                 {
                     box.Type = BlockBoxType.FloatLeft;
@@ -365,6 +400,39 @@ public sealed class LayoutEngine
                     box.Type = BlockBoxType.FloatRight;
                     box.X = _currentPage.ContentBox.Right - box.Width;
                 }
+
+                var clear = box.Clear;
+                if (!string.IsNullOrWhiteSpace(clear) && clear != "none")
+                {
+                    float maxClearY = _currentY;
+                    foreach (var region in _floatRegions)
+                    {
+                        bool clears = clear == "both" ||
+                            (clear == "left" && region.Side == "left") ||
+                            (clear == "right" && region.Side == "right");
+                        if (clears)
+                            maxClearY = Math.Max(maxClearY, region.Y + region.Height);
+                    }
+                    if (maxClearY > _currentY)
+                    {
+                        _currentY = maxClearY;
+                        box.Y = _currentY;
+                        if (cssFloat == "right")
+                            box.X = _currentPage.ContentBox.Right - box.Width;
+                        else
+                            box.X = _currentPage.ContentBox.X;
+                    }
+                }
+
+                _floatRegions.Add(new FloatRegion
+                {
+                    X = box.X,
+                    Y = box.Y,
+                    Width = box.Width,
+                    Height = box.Height + box.MarginBottom,
+                    Side = cssFloat
+                });
+                _floatRegions.RemoveAll(r => r.Y + r.Height < _currentY - _currentPage.ContentBox.Height);
             }
 
             if (box.Height <= 0)
@@ -398,9 +466,18 @@ public sealed class LayoutEngine
             var cssPosition = box.ComputedStyle?.GetPropertyValue("position");
             bool isRelative = cssPosition == "relative";
             bool isAbsolute = cssPosition == "absolute";
+            bool isFixed = cssPosition == "fixed";
+            bool isSticky = cssPosition == "sticky";
+
+            var zIndexRaw = box.ComputedStyle?.GetPropertyValue("z-index");
+            if (!string.IsNullOrWhiteSpace(zIndexRaw) && zIndexRaw != "auto" && float.TryParse(zIndexRaw, out var zi))
+            {
+                box.ZIndex = zi;
+                box.HasZIndex = true;
+            }
 
             float offsetTop = 0, offsetRight = 0, offsetBottom = 0, offsetLeft = 0;
-            if (isRelative || isAbsolute)
+            if (isRelative || isAbsolute || isFixed || isSticky)
             {
                 offsetTop = ParseLength(box.ComputedStyle?.GetPropertyValue("top"));
                 offsetRight = ParseLength(box.ComputedStyle?.GetPropertyValue("right"));
@@ -411,6 +488,55 @@ public sealed class LayoutEngine
             if (isAbsolute)
             {
                 box.Type = BlockBoxType.Absolute;
+                float cbX = _currentPage.ContentBox.X;
+                float cbY = _currentPage.ContentBox.Y;
+                float cbW = _currentPage.ContentBox.Width;
+                float cbH = _currentPage.ContentBox.Height;
+                if (_positionedContainingBlocks.Count > 0)
+                {
+                    var cb = _positionedContainingBlocks.Peek();
+                    cbX = cb.X;
+                    cbY = cb.Y;
+                    cbW = cb.Width;
+                    cbH = cb.Height;
+                }
+                box.ContainingBlockX = cbX;
+                box.ContainingBlockY = cbY;
+                box.ContainingBlockWidth = cbW;
+                box.ContainingBlockHeight = cbH;
+                float posX, posY;
+                if (box.Width <= 0 && offsetLeft > 0 && offsetRight > 0)
+                    box.Width = cbW - offsetLeft - offsetRight;
+                if (offsetLeft > 0 && offsetRight > 0)
+                {
+                    posX = cbX + offsetLeft;
+                    posY = cbY + (offsetTop > 0 ? offsetTop : 0);
+                }
+                else if (offsetLeft > 0)
+                {
+                    posX = cbX + offsetLeft;
+                    posY = cbY + (offsetTop > 0 ? offsetTop : 0);
+                }
+                else if (offsetRight > 0)
+                {
+                    posX = cbX + cbW - box.Width - offsetRight;
+                    posY = cbY + (offsetTop > 0 ? offsetTop : 0);
+                }
+                else
+                {
+                    posX = cbX;
+                    posY = cbY;
+                }
+                if (offsetTop > 0)
+                    posY = cbY + offsetTop;
+                else if (offsetBottom > 0)
+                    posY = cbY + cbH - box.Height - offsetBottom;
+                box.X = posX;
+                box.Y = posY;
+            }
+            else if (isFixed)
+            {
+                box.Type = BlockBoxType.Fixed;
                 float posX = _currentPage.ContentBox.X;
                 float posY = _currentPage.ContentBox.Y;
                 if (offsetLeft > 0) posX += offsetLeft;
@@ -420,16 +546,22 @@ public sealed class LayoutEngine
                 box.X = posX;
                 box.Y = posY;
             }
+            else if (isSticky)
+            {
+                box.Type = BlockBoxType.Sticky;
+                isRelative = true;
+            }
 
             if (!string.IsNullOrWhiteSpace(box.TextContent))
             {
+                float textY = isAbsolute ? box.Y : _currentY;
                 var inlineBox = new InlineBox
                 {
                     Text = box.TextContent,
                     Type = InlineBoxType.Text,
                     LinkUrl = box.LinkUrl,
                     X = box.X + box.PaddingLeft + box.BorderLeft,
-                    Y = (isAbsolute ? box.Y : _currentY) + box.PaddingTop,
+                    Y = textY + box.PaddingTop,
                     Width = box.ContentWidth,
                     Height = fontSize * 1.3f,
                     ComputedStyle = box.ComputedStyle
@@ -437,7 +569,7 @@ public sealed class LayoutEngine
                 box.InlineContent.Add(inlineBox);
             }
 
-            if (isAbsolute)
+            if (isAbsolute || isFixed)
             {
                 _currentPage.Blocks.Add(box);
                 _currentBlockContainer = box;
@@ -525,40 +657,160 @@ public sealed class LayoutEngine
         var flex = CurrentFlexContainer;
         var containerLeft = flex.X + flex.PaddingLeft + flex.BorderLeft;
         var containerRight = flex.X + flex.Width - flex.PaddingRight - flex.BorderRight;
+        var containerTop = flex.Y + flex.PaddingTop + flex.BorderTop;
+        var containerBottom = flex.Y + flex.Height - flex.PaddingBottom - flex.BorderBottom;
+
+        ParseFlexChildProperties(child, flex);
 
         if (flex.IsGrid && flex.GridColumnWidths.Count > 0)
         {
-            int colCount = flex.GridColumnWidths.Count;
-            if (_gridColumnIndex >= colCount)
-            {
-                // wrap to next row
-                _currentY += _flexRowMaxHeight + flex.GridRowGap;
-                _flexRowMaxHeight = 0;
-                _gridColumnIndex = 0;
-                _flexChildStartX = containerLeft;
-            }
-
-            child.Width = flex.GridColumnWidths[_gridColumnIndex];
-            child.X = _flexChildStartX;
-            child.Y = _currentY;
-
-            _flexChildStartX += child.Width + flex.FlexGap;
-            _gridColumnIndex++;
-            _flexRowMaxHeight = Math.Max(_flexRowMaxHeight, child.TotalHeight);
+            PositionGridChild(child, flex, containerLeft, containerRight, containerTop);
             return;
         }
 
+        bool isRow = flex.FlexDirection is null or "row" or "row-reverse";
+        bool isReverse = flex.FlexDirection is "row-reverse" or "column-reverse";
         bool wrap = flex.FlexWrap == "wrap" || flex.FlexWrap == "wrap-reverse";
-        if (wrap && _flexChildStartX + child.TotalWidth > containerRight && _flexChildStartX > containerLeft)
+
+        if (isRow)
         {
-            _currentY += _flexRowMaxHeight + flex.GridRowGap;
+            float childMainSize = child.FlexBasisIsAuto ? child.Width : child.FlexBasis;
+            bool isOverflowing = false;
+            if (isReverse)
+                isOverflowing = _flexChildStartX - childMainSize < containerLeft;
+            else
+                isOverflowing = _flexChildStartX + childMainSize > containerRight;
+
+            if (wrap && isOverflowing && _flexChildStartX > containerLeft)
+            {
+                _currentY += _flexRowMaxHeight + flex.GridRowGap;
+                _flexRowMaxHeight = 0;
+                _flexChildStartX = isReverse ? containerRight : containerLeft;
+            }
+
+            if (isReverse)
+            {
+                _flexChildStartX -= childMainSize;
+                child.X = _flexChildStartX;
+            }
+            else
+            {
+                child.X = _flexChildStartX;
+                _flexChildStartX += childMainSize + flex.FlexGap;
+            }
+            child.Y = _currentY;
+            _flexRowMaxHeight = Math.Max(_flexRowMaxHeight, child.TotalHeight);
+        }
+        else
+        {
+            float childMainSize = child.FlexBasisIsAuto ? child.Height : child.FlexBasis;
+            if (wrap && _currentY + childMainSize > containerBottom && _currentY > containerTop)
+            {
+                _currentY = containerTop;
+                _flexChildStartX += _flexRowMaxHeight + flex.FlexGap;
+                _flexRowMaxHeight = 0;
+            }
+            child.X = _flexChildStartX;
+            child.Y = _currentY;
+            _currentY += childMainSize + flex.GridRowGap;
+            _flexRowMaxHeight = Math.Max(_flexRowMaxHeight, child.TotalWidth);
+        }
+    }
+
+    private static void ParseFlexChildProperties(BlockBox child, BlockBox flex)
+    {
+        var style = child.ComputedStyle;
+        if (style == null) return;
+        var grow = style.GetPropertyValue("flex-grow");
+        child.FlexGrow = (!string.IsNullOrWhiteSpace(grow) && float.TryParse(grow, out var g)) ? g : 0;
+        var shrink = style.GetPropertyValue("flex-shrink");
+        child.FlexShrink = (!string.IsNullOrWhiteSpace(shrink) && float.TryParse(shrink, out var s)) ? s : 1;
+        var basis = style.GetPropertyValue("flex-basis");
+        if (!string.IsNullOrWhiteSpace(basis) && basis != "auto")
+        {
+            child.FlexBasisIsAuto = false;
+            if (basis.EndsWith('%'))
+            {
+                float pcbWidth = flex.ContentWidth > 0 ? flex.ContentWidth : 0;
+                if (float.TryParse(basis[..^1], out var pct))
+                    child.FlexBasis = pcbWidth * pct / 100f;
+            }
+            else
+            {
+                child.FlexBasis = CssLengthParser.ParseLengthMm(basis);
+            }
+        }
+        else
+        {
+            child.FlexBasisIsAuto = true;
+            child.FlexBasis = 0;
+        }
+        var flexShorthand = style.GetPropertyValue("flex");
+        if (!string.IsNullOrWhiteSpace(flexShorthand) && flexShorthand != "none")
+        {
+            var parts = flexShorthand.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length >= 1 && float.TryParse(parts[0], out var flexGrow))
+                child.FlexGrow = flexGrow;
+            if (parts.Length >= 2 && float.TryParse(parts[1], out var flexShrink))
+                child.FlexShrink = flexShrink;
+            if (parts.Length >= 3 && parts[2] != "auto")
+            {
+                child.FlexBasisIsAuto = false;
+                if (parts[2].EndsWith('%'))
+                {
+                    float pcbWidth = flex.ContentWidth > 0 ? flex.ContentWidth : 0;
+                    if (float.TryParse(parts[2][..^1], out var pct))
+                        child.FlexBasis = pcbWidth * pct / 100f;
+                }
+                else
+                {
+                    child.FlexBasis = CssLengthParser.ParseLengthMm(parts[2]);
+                }
+            }
+        }
+        var alignSelf = style.GetPropertyValue("align-self");
+        child.AlignSelf = (!string.IsNullOrWhiteSpace(alignSelf) && alignSelf != "auto") ? alignSelf : null;
+        var order = style.GetPropertyValue("order");
+        child.Order = (!string.IsNullOrWhiteSpace(order) && int.TryParse(order, out var o)) ? o : 0;
+    }
+
+    private void PositionGridChild(BlockBox child, BlockBox flex, float containerLeft, float containerRight, float containerTop)
+    {
+        int colCount = flex.GridColumnWidths.Count;
+        bool hasRowHeights = flex.GridRowHeights.Count > 0;
+        int colStart = child.GridColumnStart > 0 ? child.GridColumnStart - 1 : _gridColumnIndex;
+        int rowStart = child.GridRowStart > 0 ? child.GridRowStart - 1 : _gridRowIndex;
+        if (hasRowHeights && rowStart > _gridRowIndex)
+        {
+            float rowOffset = 0;
+            for (int r = _gridRowIndex; r < rowStart && r < flex.GridRowHeights.Count; r++)
+                rowOffset += flex.GridRowHeights[r] + flex.GridRowGap;
+            _currentY += rowOffset;
             _flexRowMaxHeight = 0;
+            _gridRowIndex = rowStart;
+            _gridColumnIndex = 0;
             _flexChildStartX = containerLeft;
         }
-
+        if (_gridColumnIndex >= colCount)
+        {
+            if (hasRowHeights && _gridRowIndex < flex.GridRowHeights.Count)
+                _currentY += flex.GridRowHeights[_gridRowIndex] + flex.GridRowGap;
+            else
+                _currentY += _flexRowMaxHeight + flex.GridRowGap;
+            _flexRowMaxHeight = 0;
+            _gridColumnIndex = 0;
+            _gridRowIndex++;
+            _flexChildStartX = containerLeft;
+        }
+        int colSpan = Math.Max(1, child.GridColumnEnd - child.GridColumnStart);
+        float colWidth = 0;
+        for (int c = _gridColumnIndex; c < _gridColumnIndex + colSpan && c < colCount; c++)
+            colWidth += flex.GridColumnWidths[c];
+        child.Width = colWidth > 0 ? colWidth : flex.GridColumnWidths[_gridColumnIndex];
         child.X = _flexChildStartX;
         child.Y = _currentY;
-        _flexChildStartX += child.Width + child.MarginLeft + child.MarginRight + flex.FlexGap;
+        _flexChildStartX += child.Width + flex.FlexGap;
+        _gridColumnIndex += colSpan;
         _flexRowMaxHeight = Math.Max(_flexRowMaxHeight, child.TotalHeight);
     }
 
@@ -568,7 +820,11 @@ public sealed class LayoutEngine
         _flexChildStartX = flex.X + flex.PaddingLeft + flex.BorderLeft;
         _flexRowMaxHeight = 0;
         _gridColumnIndex = 0;
+        _gridRowIndex = 0;
+        _gridRowStartY = _currentY;
         _currentY = flex.Y + flex.PaddingTop + flex.BorderTop;
+        if (flex.IsGrid && flex.GridRowHeights.Count > 0)
+            _gridRowStartY = _currentY;
     }
 
     public void EndFlexContainer()
@@ -577,13 +833,257 @@ public sealed class LayoutEngine
         CurrentFlexContainer = null;
         if (flex == null) return;
 
-        _currentY += _flexRowMaxHeight;
+        bool isGrid = flex.IsGrid;
+
+        if (!isGrid)
+        {
+            var children = _currentPage.Blocks
+                .Where(b => b != flex && b.Y >= flex.Y + flex.PaddingTop + flex.BorderTop
+                    && b.Y < flex.Y + flex.Height)
+                .ToList();
+
+            if (children.Count > 0)
+            {
+                children.Sort((a, b) => a.Order.CompareTo(b.Order));
+                bool isRow = flex.FlexDirection is null or "row" or "row-reverse";
+                bool isReverse = flex.FlexDirection is "row-reverse" or "column-reverse";
+
+                if (isRow)
+                {
+                    var lines = new List<List<BlockBox>>();
+                    var currentLine = new List<BlockBox>();
+                    float containerWidth = flex.ContentWidth;
+                    float currentLineWidth = 0;
+                    float gap = flex.FlexGap;
+
+                    foreach (var child in children)
+                    {
+                        float childSize = child.FlexBasisIsAuto ? child.Width : child.FlexBasis;
+                        if (childSize <= 0) childSize = child.Width > 0 ? child.Width : 50;
+
+                        if (flex.FlexWrap is "wrap" or "wrap-reverse" && currentLine.Count > 0
+                            && currentLineWidth + childSize + gap > containerWidth)
+                        {
+                            lines.Add(currentLine);
+                            currentLine = new List<BlockBox>();
+                            currentLineWidth = 0;
+                        }
+
+                        currentLine.Add(child);
+                        currentLineWidth += childSize + (currentLine.Count > 1 ? gap : 0);
+                    }
+                    if (currentLine.Count > 0)
+                        lines.Add(currentLine);
+
+                    float containerTop = flex.Y + flex.PaddingTop + flex.BorderTop;
+                    float cursorY = containerTop;
+
+                    foreach (var line in lines)
+                    {
+                        float totalGap = gap * (line.Count - 1);
+                        float totalBaseSize = line.Sum(c => c.FlexBasisIsAuto ? c.Width : c.FlexBasis);
+                        float availableSpace = containerWidth - totalBaseSize - totalGap;
+                        float totalGrow = line.Sum(c => c.FlexGrow);
+                        float totalShrink = line.Sum(c => c.FlexShrink);
+
+                        var justifiedPositions = ApplyJustifyContent(
+                            line, flex.JustifyContent ?? "flex-start",
+                            containerWidth, totalGap, totalBaseSize,
+                            flex.X + flex.PaddingLeft + flex.BorderLeft, isReverse);
+
+                        int itemIndex = 0;
+                        foreach (var child in line)
+                        {
+                            float baseSize = child.FlexBasisIsAuto ? child.Width : child.FlexBasis;
+                            if (baseSize <= 0) baseSize = child.Width > 0 ? child.Width : 50;
+
+                            if (availableSpace > 0 && totalGrow > 0)
+                            {
+                                float extra = availableSpace * child.FlexGrow / totalGrow;
+                                if (isRow) child.Width = baseSize + extra;
+                            }
+                            else if (availableSpace < 0 && totalShrink > 0)
+                            {
+                                float shrinkAmount = Math.Abs(availableSpace) * child.FlexShrink / totalShrink;
+                                float minWidth = child.MinWidth > 0 ? child.MinWidth : 0;
+                                if (isRow) child.Width = Math.Max(minWidth, baseSize - shrinkAmount);
+                            }
+
+                            if (isReverse)
+                                child.X = justifiedPositions[itemIndex] - child.Width;
+                            else
+                                child.X = justifiedPositions[itemIndex];
+                            child.Y = cursorY;
+                            itemIndex++;
+                        }
+
+                        var align = flex.AlignItems ?? "stretch";
+                        foreach (var child in line)
+                        {
+                            string? childAlign = child.AlignSelf;
+                            string effectiveAlign = childAlign ?? align;
+                            if (effectiveAlign == "stretch")
+                            {
+                                float maxChildH = line.Max(c => c.Height);
+                                if (maxChildH > child.Height)
+                                    child.Height = maxChildH;
+                            }
+                            else if (effectiveAlign == "center")
+                            {
+                                float maxH = line.Max(c => c.Height);
+                                child.Y = cursorY + (maxH - child.Height) / 2;
+                            }
+                            else if (effectiveAlign == "flex-end")
+                            {
+                                float maxH = line.Max(c => c.Height);
+                                child.Y = cursorY + (maxH - child.Height);
+                            }
+                        }
+
+                        float lineHeight = line.Max(c => c.TotalHeight);
+                        cursorY += lineHeight + (flex.GridRowGap > 0 ? flex.GridRowGap : 0);
+                    }
+
+                    _currentY = cursorY;
+                    _flexRowMaxHeight = cursorY - containerTop;
+                }
+                else
+                {
+                    float cursorY = flex.Y + flex.PaddingTop + flex.BorderTop;
+                    foreach (var child in children)
+                    {
+                        child.X = flex.X + flex.PaddingLeft + flex.BorderLeft;
+                        child.Y = cursorY;
+                        cursorY += child.Height + flex.GridRowGap;
+                    }
+                    _currentY = cursorY;
+                    _flexRowMaxHeight = cursorY - (flex.Y + flex.PaddingTop + flex.BorderTop);
+                }
+            }
+        }
+        else
+        {
+            if (flex.GridRowHeights.Count > 0)
+            {
+                float totalGridH = flex.GridRowHeights.Sum() + flex.GridRowGap * (flex.GridRowHeights.Count - 1);
+                _currentY = _gridRowStartY + totalGridH;
+            }
+            else
+            {
+                _currentY += _flexRowMaxHeight;
+            }
+        }
+
+        if (!isGrid && flex.FlexWrap is "wrap" or "wrap-reverse")
+        {
+            var flexChildren = _currentPage.Blocks.Where(b => b != flex && b.Y >= flex.Y + flex.PaddingTop + flex.BorderTop).ToList();
+            if (flexChildren.Count > 1)
+            {
+                var lineYPositions = flexChildren.Select(c => c.Y).Distinct().OrderBy(y => y).ToList();
+                int lineCount = lineYPositions.Count;
+                if (lineCount > 1)
+                {
+                    var alignContent = flex.AlignContent ?? "stretch";
+                    float totalContentH = _currentY - (flex.Y + flex.PaddingTop + flex.BorderTop);
+                    float containerH = flex.ContentHeight;
+                    if (containerH > totalContentH)
+                    {
+                        float extraSpace = containerH - totalContentH;
+                        if (alignContent == "center")
+                        {
+                            float shift = extraSpace / 2;
+                            foreach (var child in flexChildren)
+                                child.Y += shift;
+                            _currentY += shift;
+                        }
+                        else if (alignContent == "flex-end")
+                        {
+                            foreach (var child in flexChildren)
+                                child.Y += extraSpace;
+                            _currentY += extraSpace;
+                        }
+                        else if (alignContent == "space-between")
+                        {
+                            float space = extraSpace / (lineCount - 1);
+                            var lineShifts = new Dictionary<float, float>();
+                            float accShift = 0;
+                            foreach (var yPos in lineYPositions)
+                            {
+                                lineShifts[yPos] = accShift;
+                                accShift += space;
+                            }
+                            foreach (var child in flexChildren)
+                                child.Y += lineShifts.GetValueOrDefault(child.Y, 0);
+                            _currentY += extraSpace;
+                        }
+                        else if (alignContent == "space-around")
+                        {
+                            float space = extraSpace / (lineCount * 2);
+                            var lineShifts = new Dictionary<float, float>();
+                            float accShift = space;
+                            foreach (var yPos in lineYPositions)
+                            {
+                                lineShifts[yPos] = accShift;
+                                accShift += space * 2;
+                            }
+                            foreach (var child in flexChildren)
+                                child.Y += lineShifts.GetValueOrDefault(child.Y, 0);
+                            _currentY += extraSpace;
+                        }
+                    }
+                }
+            }
+        }
+
         flex.Height = Math.Max(flex.Height, _currentY - flex.Y);
         _currentY += flex.MarginBottom;
 
         _currentInlineX = _currentPage.ContentBox.X;
         _currentInlineY = _currentY;
         _currentInlineLineHeight = 0;
+    }
+
+    private static float[] ApplyJustifyContent(List<BlockBox> line, string justifyContent,
+        float containerWidth, float totalGap, float totalBaseSize, float startX, bool isReverse)
+    {
+        int count = line.Count;
+        var positions = new float[count];
+        if (count == 0) return positions;
+        float totalUsed = totalBaseSize + totalGap;
+        float extraSpace = Math.Max(0, containerWidth - totalUsed);
+        float cursor = startX;
+        float gap = justifyContent switch
+        {
+            "space-between" when count > 1 => extraSpace / (count - 1),
+            "space-around" when count > 0 => extraSpace / count,
+            "space-evenly" when count > 0 => extraSpace / (count + 1),
+            "center" => 0,
+            "flex-end" => 0,
+            _ => 0
+        };
+        if (justifyContent == "space-around" || justifyContent == "space-evenly")
+        {
+            float baseSpacing = justifyContent == "space-around" ? gap / 2 : gap;
+            cursor += baseSpacing;
+        }
+        else if (justifyContent == "center")
+            cursor += extraSpace / 2;
+        else if (justifyContent == "flex-end")
+            cursor += extraSpace;
+        for (int i = 0; i < count; i++)
+        {
+            positions[i] = cursor;
+            float childSize = line[i].FlexBasisIsAuto ? line[i].Width : line[i].FlexBasis;
+            if (childSize <= 0) childSize = line[i].Width > 0 ? line[i].Width : 50;
+            cursor += childSize + (line[i].FlexGap > 0 ? line[i].FlexGap : 0);
+            if (justifyContent == "space-between" && i < count - 1)
+                cursor += gap;
+            else if (justifyContent == "space-around")
+                cursor += gap;
+            else if (justifyContent == "space-evenly")
+                cursor += gap;
+        }
+        return positions;
     }
 
     private static List<float> ParseGridTemplateColumns(string? template, float availableWidth, float gap)
@@ -604,30 +1104,52 @@ public sealed class LayoutEngine
         if (repeatMatch.Success)
         {
             var trackSpec = repeatMatch.Groups[2].Value.Trim();
-            float minTrack = 100f;
+            float trackSize = 0;
+            bool isMinMax = false;
+            float minTrackSize = 0;
             var minmaxMatch = System.Text.RegularExpressions.Regex.Match(
                 trackSpec, @"minmax\(\s*([^,]+)\s*,\s*([^)]+)\s*\)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
             if (minmaxMatch.Success)
-                minTrack = ParseCssLength(minmaxMatch.Groups[1].Value.Trim(), availableWidth);
-            else
-                minTrack = ParseCssLength(trackSpec, availableWidth);
-
-            if (minTrack <= 0) minTrack = 100f;
-
-            int explicitCount = repeatMatch.Groups[1].Success ? int.Parse(repeatMatch.Groups[1].Value) : 0;
-            int colCount = explicitCount > 0
-                ? explicitCount
-                : Math.Max(1, (int)((availableWidth + gap) / (minTrack + gap)));
-
-            float colWidth = (availableWidth - gap * (colCount - 1)) / colCount;
-            if (colWidth < minTrack && explicitCount == 0)
             {
-                colCount = Math.Max(1, colCount - 1);
-                colWidth = (availableWidth - gap * (colCount - 1)) / colCount;
+                isMinMax = true;
+                minTrackSize = ParseCssLength(minmaxMatch.Groups[1].Value.Trim(), availableWidth);
+                var maxStr = minmaxMatch.Groups[2].Value.Trim();
+                if (maxStr.EndsWith("fr", StringComparison.OrdinalIgnoreCase))
+                    trackSize = 0;
+                else
+                    trackSize = ParseCssLength(maxStr, availableWidth);
+                if (minTrackSize <= 0) minTrackSize = 50f;
+                if (trackSize <= 0) trackSize = minTrackSize;
+            }
+            else
+            {
+                trackSize = ParseCssLength(trackSpec, availableWidth);
+                if (trackSize <= 0) trackSize = 100f;
             }
 
+            int explicitCount = repeatMatch.Groups[1].Success ? int.Parse(repeatMatch.Groups[1].Value) : 0;
+
+            if (explicitCount > 0)
+            {
+                for (int i = 0; i < explicitCount; i++)
+                    widths.Add(trackSize);
+                return widths;
+            }
+
+            float minTrack = isMinMax ? minTrackSize : trackSize;
+            int colCount = Math.Max(1, (int)((availableWidth + gap) / (minTrack + gap)));
+            float colWidth = (availableWidth - gap * (colCount - 1)) / colCount;
+            if (colWidth < minTrack && colCount > 1)
+            {
+                colCount--;
+                colWidth = (availableWidth - gap * (colCount - 1)) / colCount;
+            }
+            float actualSize = isMinMax ? Math.Max(minTrackSize, colWidth) : trackSize;
+            if (isMinMax && actualSize > colWidth)
+                actualSize = colWidth;
+
             for (int i = 0; i < colCount; i++)
-                widths.Add(colWidth);
+                widths.Add(actualSize);
 
             return widths;
         }
@@ -688,6 +1210,17 @@ public sealed class LayoutEngine
         }
         if (start < value.Length) parts.Add(value[start..]);
         return parts;
+    }
+
+    public void PushPositionedContainingBlock(float x, float y, float width, float height)
+    {
+        _positionedContainingBlocks.Push(new PositionedContainingBlock { X = x, Y = y, Width = width, Height = height });
+    }
+
+    public void PopPositionedContainingBlock()
+    {
+        if (_positionedContainingBlocks.Count > 0)
+            _positionedContainingBlocks.Pop();
     }
 
     // Returns the font size expressed in millimetres (layout units).

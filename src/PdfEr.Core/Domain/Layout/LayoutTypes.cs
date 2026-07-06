@@ -88,14 +88,44 @@ public sealed class BlockBox
     public float MaxWidth { get; set; }
     public float MinHeight { get; set; }
     public float MaxHeight { get; set; }
+    // Flexbox
     public string? FlexDirection { get; set; }
     public string? JustifyContent { get; set; }
     public string? AlignItems { get; set; }
+    public string? AlignSelf { get; set; }
+    public string? AlignContent { get; set; }
     public float FlexGap { get; set; }
     public string? FlexWrap { get; set; }
+    public float FlexGrow { get; set; }
+    public float FlexShrink { get; set; }
+    public float FlexBasis { get; set; }
+    public bool FlexBasisIsAuto { get; set; } = true;
+    public int Order { get; set; }
+
+    // Grid
     public bool IsGrid { get; set; }
     public List<float> GridColumnWidths { get; set; } = new();
+    public List<float> GridRowHeights { get; set; } = new();
     public float GridRowGap { get; set; }
+    public float GridColumnGap { get; set; }
+    public string? GridAutoFlow { get; set; }
+    public int GridColumnStart { get; set; }
+    public int GridColumnEnd { get; set; }
+    public int GridRowStart { get; set; }
+    public int GridRowEnd { get; set; }
+
+    // Float & Clear
+    public string? Clear { get; set; }
+
+    // Positioning
+    public float ZIndex { get; set; }
+    public bool HasZIndex { get; set; }
+
+    // Containing block tracking for absolute positioning
+    public float? ContainingBlockX { get; set; }
+    public float? ContainingBlockY { get; set; }
+    public float? ContainingBlockWidth { get; set; }
+    public float? ContainingBlockHeight { get; set; }
 
     public float ContentWidth => Width - PaddingLeft - PaddingRight - BorderLeft - BorderRight;
     public float ContentHeight => Height - PaddingTop - PaddingBottom - BorderTop - BorderBottom;
@@ -114,7 +144,9 @@ public enum BlockBoxType
     TableRow,
     TableCell,
     InlineBlock,
-    FlexContainer
+    FlexContainer,
+    Fixed,
+    Sticky,
 }
 
 public sealed class InlineBox
