@@ -77,10 +77,19 @@ public sealed class CssMerger
             div { display:block; }
             span { display:inline; }
         ";
+        // CssParser.Parse caches CssStylesheet/CssRule instances by CSS text and returns
+        // the same shared objects to every caller. The default stylesheet text is identical
+        // across all CssMerger instances, so mutating those rules in place raced under
+        // parallel test execution (System.InvalidOperationException in CssDeclarationBlock
+        // enumeration). Clone each rule's declarations before expanding so we only ever
+        // mutate a copy owned by this CssMerger instance.
         var parsed = _parser.Parse(defaults);
         foreach (var rule in parsed.Rules)
-            ExpandRuleInPlace(rule);
-        _defaultStylesheet.Merge(parsed);
+        {
+            var clonedRule = new CssRule(rule.Selector, rule.Specificity, rule.Declarations.Clone(), rule.IsImportant);
+            ExpandRuleInPlace(clonedRule);
+            _defaultStylesheet.Rules.Add(clonedRule);
+        }
     }
 
     private void ExpandRuleInPlace(CssRule rule)
@@ -102,11 +111,15 @@ public sealed class CssMerger
 
         CollectCustomProperties(allRules);
 
+        // Rules here may be shared cached instances from CssParser.Parse (keyed by CSS
+        // text); clone before mutating so concurrent parses of identical CSS don't race
+        // on the same CssDeclarationBlock (see LoadDefaultStyles for the same fix).
         foreach (var rule in allRules)
         {
-            ResolveVariablesInPlace(rule.Declarations);
-            ExpandRuleInPlace(rule);
-            _userStylesheet.Rules.Add(rule);
+            var clonedRule = new CssRule(rule.Selector, rule.Specificity, rule.Declarations.Clone(), rule.IsImportant);
+            ResolveVariablesInPlace(clonedRule.Declarations);
+            ExpandRuleInPlace(clonedRule);
+            _userStylesheet.Rules.Add(clonedRule);
         }
 
         foreach (var rule in stylesheet.FontFaceRules)
