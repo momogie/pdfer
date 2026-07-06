@@ -186,6 +186,75 @@ public class BlockPlacerTests
     }
 
     [Fact]
+    public void Place_ExplicitWidth_DefaultBoxSizing_AddsPaddingAndBorderOnTop()
+    {
+        // CSS2.1 default box-sizing:content-box -- "width" specifies content
+        // width; the border-box geometry width (what BoxGeometry.Width means)
+        // must include padding+border on top of that.
+        var decl = new CssDeclarationBlock();
+        decl.SetProperty("width", "50mm");
+        decl.SetProperty("padding-left", "5mm");
+        decl.SetProperty("padding-right", "5mm");
+        decl.SetProperty("border-left-width", "1mm");
+        decl.SetProperty("border-right-width", "1mm");
+        var box = Block(decl);
+
+        var placer = new BlockPlacer();
+        placer.Place(box, new ContainingBlock(180, 0, false), 0, 0);
+
+        Assert.Equal(62, box.Geometry.Width); // 50 content + 5+5 padding + 1+1 border
+        Assert.Equal(50, box.Geometry.ContentWidth, 3);
+    }
+
+    [Fact]
+    public void Place_ExplicitWidth_BorderBoxSizing_TreatsWidthAsTotal()
+    {
+        var decl = new CssDeclarationBlock();
+        decl.SetProperty("width", "50mm");
+        decl.SetProperty("padding-left", "5mm");
+        decl.SetProperty("padding-right", "5mm");
+        decl.SetProperty("box-sizing", "border-box");
+        var box = Block(decl);
+
+        var placer = new BlockPlacer();
+        placer.Place(box, new ContainingBlock(180, 0, false), 0, 0);
+
+        Assert.Equal(50, box.Geometry.Width); // width IS the border-box width
+        Assert.Equal(40, box.Geometry.ContentWidth, 3); // 50 - 5 - 5 padding
+    }
+
+    [Fact]
+    public void Place_ExplicitHeight_DefaultBoxSizing_AddsPaddingAndBorderOnTop()
+    {
+        var decl = new CssDeclarationBlock();
+        decl.SetProperty("height", "30mm");
+        decl.SetProperty("padding-top", "2mm");
+        decl.SetProperty("padding-bottom", "3mm");
+        var box = Block(decl);
+
+        var placer = new BlockPlacer();
+        placer.Place(box, new ContainingBlock(100, 0, false), 0, 0);
+
+        Assert.Equal(35, box.Geometry.Height); // 30 + 2 + 3
+    }
+
+    [Fact]
+    public void Place_ExplicitHeight_BorderBoxSizing_TreatsHeightAsTotal()
+    {
+        var decl = new CssDeclarationBlock();
+        decl.SetProperty("height", "30mm");
+        decl.SetProperty("padding-top", "2mm");
+        decl.SetProperty("padding-bottom", "3mm");
+        decl.SetProperty("box-sizing", "border-box");
+        var box = Block(decl);
+
+        var placer = new BlockPlacer();
+        placer.Place(box, new ContainingBlock(100, 0, false), 0, 0);
+
+        Assert.Equal(30, box.Geometry.Height);
+    }
+
+    [Fact]
     public void Place_WidthAsPercent_ResolvesAgainstContainingBlock()
     {
         var decl = new CssDeclarationBlock();

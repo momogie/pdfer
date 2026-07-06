@@ -40,6 +40,16 @@ public class BlockPlacerLineBreakingTests
         return box;
     }
 
+    private static LayoutBox AnonymousBlockWithAlign(string textAlign, params LayoutBox[] children)
+    {
+        var decl = new CssDeclarationBlock();
+        decl.SetProperty("text-align", textAlign);
+        var box = new LayoutBox { Kind = LayoutBoxKind.Anonymous, IsAnonymous = true, Style = ComputedStyle.Resolve(decl) };
+        foreach (var child in children)
+            box.AddChild(child);
+        return box;
+    }
+
     private static List<LayoutBox> TextLinesOf(LayoutBox box) =>
         box.Children.Where(c => c.Kind == LayoutBoxKind.Text).ToList();
 
@@ -143,6 +153,90 @@ public class BlockPlacerLineBreakingTests
 
         var imageChild = box.Children.Single(c => c.Kind == LayoutBoxKind.Image);
         Assert.Equal(25.4f, imageChild.Geometry.Width, 2);
+    }
+
+    [Fact]
+    public void Place_TextAlignLeft_Default_StartsAtContentLeft()
+    {
+        var registry = FakeRegistryWithFixedAdvance(5f);
+        var placer = new BlockPlacer(registry);
+        var box = AnonymousBlock(TextBox("hi")); // 2 chars = 1.764mm
+
+        placer.Place(box, new ContainingBlock(50, 0, false), 10, 0);
+
+        var line = TextLinesOf(box).Single();
+        Assert.Equal(10, line.Geometry.X, 3);
+    }
+
+    [Fact]
+    public void Place_TextAlignRight_ShiftsLineToRightEdge()
+    {
+        var registry = FakeRegistryWithFixedAdvance(5f);
+        var placer = new BlockPlacer(registry);
+        var box = AnonymousBlockWithAlign("right", TextBox("hi")); // 2 chars = 1.764mm
+
+        placer.Place(box, new ContainingBlock(50, 0, false), 0, 0);
+
+        var line = TextLinesOf(box).Single();
+        var expectedX = 50 - (2 * 5f * PtToMm);
+        Assert.Equal(expectedX, line.Geometry.X, 2);
+    }
+
+    [Fact]
+    public void Place_TextAlignCenter_CentersLineHorizontally()
+    {
+        var registry = FakeRegistryWithFixedAdvance(5f);
+        var placer = new BlockPlacer(registry);
+        var box = AnonymousBlockWithAlign("center", TextBox("hi")); // 2 chars = 1.764mm
+
+        placer.Place(box, new ContainingBlock(50, 0, false), 0, 0);
+
+        var line = TextLinesOf(box).Single();
+        var wordWidth = 2 * 5f * PtToMm;
+        var expectedX = (50 - wordWidth) / 2f;
+        Assert.Equal(expectedX, line.Geometry.X, 2);
+    }
+
+    [Fact]
+    public void Place_TextAlignJustify_StretchesSpaceBetweenWordsOnNonLastLine()
+    {
+        var registry = FakeRegistryWithFixedAdvance(5f);
+        var placer = new BlockPlacer(registry);
+        // Two words short enough to fit one line easily; justify should still
+        // only apply to non-last lines -- with only one line, it IS the last
+        // line, so words should NOT be stretched (stay at natural position).
+        var box = AnonymousBlockWithAlign("justify", TextBox("hi there"));
+
+        placer.Place(box, new ContainingBlock(50, 0, false), 0, 0);
+
+        var lines = TextLinesOf(box);
+        Assert.Equal(2, lines.Count);
+        // "hi" at natural start position (no stretching on the last/only line).
+        Assert.Equal(0, lines[0].Geometry.X, 2);
+    }
+
+    [Fact]
+    public void Place_TextAlignJustify_NonLastLineFillsFullWidth()
+    {
+        var registry = FakeRegistryWithFixedAdvance(5f);
+        var placer = new BlockPlacer(registry);
+        // Force a wrap so there are at least 2 lines; the first (non-last) line
+        // should be justified to fill the full available width.
+        var box = AnonymousBlockWithAlign("justify", TextBox("alpha bravo charlie delta echo foxtrot"));
+
+        placer.Place(box, new ContainingBlock(15, 0, false), 0, 0);
+
+        var lines = TextLinesOf(box);
+        var lineGroups = lines.GroupBy(l => l.Geometry.Y).OrderBy(g => g.Key).ToList();
+        Assert.True(lineGroups.Count >= 2, "Expected at least 2 lines to test justify on a non-last line");
+
+        var firstLineItems = lineGroups[0].OrderBy(l => l.Geometry.X).ToList();
+        if (firstLineItems.Count > 1)
+        {
+            var lastItem = firstLineItems[^1];
+            var rightEdge = lastItem.Geometry.X + lastItem.Geometry.Width;
+            Assert.Equal(15, rightEdge, 1); // justified line's last word ends at the content edge
+        }
     }
 
     [Fact]

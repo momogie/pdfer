@@ -137,7 +137,10 @@ public sealed class BlockPlacer
 
         var explicitHeight = ResolveExplicitLength(box.Style.GetPropertyValue("height"), containingBlock.Height, containingBlock.HeightIsDefinite);
         if (explicitHeight.HasValue)
-            geometry.Height = explicitHeight.Value;
+        {
+            var paddingBorderHeight = geometry.PaddingTop + geometry.PaddingBottom + geometry.BorderTop + geometry.BorderBottom;
+            geometry.Height = IsBorderBox(box.Style) ? explicitHeight.Value : explicitHeight.Value + paddingBorderHeight;
+        }
 
         box.Geometry = geometry;
     }
@@ -204,20 +207,52 @@ public sealed class BlockPlacer
         if (currentLine.Count > 0 || lines.Count == 0)
             lines.Add(currentLine);
 
+        var textAlign = box.Style.GetPropertyValue("text-align")?.Trim().ToLowerInvariant() ?? "left";
+
         var newChildren = new List<LayoutBox>();
         float cursorY = contentTop;
 
-        foreach (var line in lines)
+        for (int lineIndex = 0; lineIndex < lines.Count; lineIndex++)
         {
+            var line = lines[lineIndex];
+            bool isLastLine = lineIndex == lines.Count - 1;
+
             float lineHeight = line.Count > 0
                 ? line.Max(i => i.Kind == InlineItemKind.Image ? ImageHeightMm(i.ImageSource!) : i.Style.FontSizeMm * AutoLineHeightFactor)
                 : (items.Count > 0 ? items[0].Style.FontSizeMm * AutoLineHeightFactor : 0);
 
-            float cursorX = contentLeft;
+            // Natural (left-aligned) width of this line: sum of item widths plus
+            // one space gap between each pair of items.
+            float naturalWidth = line.Count > 0
+                ? line.Sum(i => i.WidthMm) + spaceWidthMm * (line.Count - 1)
+                : 0;
+            float extraSpace = Math.Max(0, maxWidth - naturalWidth);
+
+            // CSS 2.1 16.2: "justify" stretches inter-word space, but the LAST
+            // line of a justified block is left-aligned, not stretched, so it
+            // doesn't look like the last line is straining to fill the width.
+            bool justifyThisLine = textAlign == "justify" && !isLastLine && line.Count > 1;
+
+            float lineStartX = contentLeft;
+            float effectiveSpaceWidth = spaceWidthMm;
+            if (justifyThisLine)
+            {
+                effectiveSpaceWidth = spaceWidthMm + extraSpace / (line.Count - 1);
+            }
+            else if (textAlign == "center")
+            {
+                lineStartX += extraSpace / 2f;
+            }
+            else if (textAlign == "right")
+            {
+                lineStartX += extraSpace;
+            }
+
+            float cursorX = lineStartX;
             for (int i = 0; i < line.Count; i++)
             {
                 var item = line[i];
-                if (i > 0) cursorX += spaceWidthMm;
+                if (i > 0) cursorX += effectiveSpaceWidth;
 
                 if (item.Kind == InlineItemKind.Image)
                 {
@@ -349,22 +384,38 @@ public sealed class BlockPlacer
         return maxPositive + minNegative;
     }
 
+    /// <summary>
+    /// CSS "box-sizing": whether the "width"/"height" properties specify the
+    /// content box (default, CSS2.1) or the border box (box-sizing: border-box).
+    /// BoxGeometry.Width/Height are always border-box (matching the legacy
+    /// BlockBox model), so a content-box "width" needs padding+border added on
+    /// top to become the border-box geometry width.
+    /// </summary>
+    private static bool IsBorderBox(ComputedStyle style) =>
+        style.GetPropertyValue("box-sizing")?.Trim().ToLowerInvariant() == "border-box";
+
     private static float ResolveWidth(LayoutBox box, ContainingBlock containingBlock, BoxGeometry geometry)
     {
+        var paddingBorder = geometry.PaddingLeft + geometry.PaddingRight + geometry.BorderLeft + geometry.BorderRight;
+
         var explicitWidth = ResolveExplicitLength(box.Style.GetPropertyValue("width"), containingBlock.Width, true);
         if (explicitWidth.HasValue)
-            return explicitWidth.Value;
+            return IsBorderBox(box.Style) ? explicitWidth.Value : explicitWidth.Value + paddingBorder;
 
         if (box.Kind is LayoutBoxKind.InlineBlock or LayoutBoxKind.Inline)
         {
             // Shrink-to-fit (CSS 2.1 10.3.9): bounded by the containing block,
             // sized from Pass 1's intrinsic max-content width when available.
-            var available = Math.Max(0, containingBlock.Width - geometry.PaddingLeft - geometry.PaddingRight - geometry.BorderLeft - geometry.BorderRight);
+            var available = Math.Max(0, containingBlock.Width - paddingBorder);
             var maxContent = box.Intrinsic?.MaxContentWidth ?? available;
-            return Math.Min(available, maxContent) + geometry.PaddingLeft + geometry.PaddingRight + geometry.BorderLeft + geometry.BorderRight;
+            return Math.Min(available, maxContent) + paddingBorder;
         }
 
         // Default: a block box fills its containing block's width (CSS 2.1 10.3.3).
+        // Border-box width already includes padding/border here (the containing
+        // block's content width is a border-box quantity for its children), so
+        // box-sizing doesn't change this branch -- it only matters when "width"
+        // is explicit.
         return containingBlock.Width;
     }
 

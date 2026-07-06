@@ -37,6 +37,22 @@ public class BoxTreePipelineFidelityTests : IAsyncLifetime
         the box-tree pipeline's real line-breaking is exercised against a narrow
         containing block width.</p></body></html>
         """)]
+    [InlineData("""
+        <html><body>
+        <p style="width:80mm;text-align:center">Centered text should sit in the
+        middle of this narrow paragraph once wrapped across lines.</p>
+        <p style="width:80mm;text-align:right">Right aligned text should hug the
+        right edge of this narrow paragraph once wrapped across lines.</p>
+        <p style="width:80mm;text-align:justify">Justified text should stretch
+        the spacing between words so each non-last line reaches the full width
+        of this narrow paragraph once wrapped across lines.</p>
+        </body></html>
+        """)]
+    [InlineData("""
+        <html><body><div style="width:60mm;padding:10mm;box-sizing:border-box;border:1mm solid black">
+        This div uses box-sizing:border-box, so its declared width already
+        includes the padding and border.</div></body></html>
+        """)]
     public async Task BoxTreePipeline_SimpleDocument_ProducesComparableOutput(string html)
     {
         var pdfChromium = await _helper!.RenderHtmlViaChromiumAsync(html);
