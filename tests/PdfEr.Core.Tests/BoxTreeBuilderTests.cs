@@ -265,6 +265,58 @@ public class BoxTreeBuilderTests
         Assert.Null(FindByTagName(root!, "img"));
     }
 
+    [Fact]
+    public async Task BuildFromDocument_TableCell_DefaultsToColSpanRowSpanOne()
+    {
+        var root = await BuildAsync("<html><body><table><tr><td>Cell</td></tr></table></body></html>");
+
+        var cell = FindByTagName(root!, "td");
+        Assert.NotNull(cell);
+        Assert.Equal(1, cell!.ColSpan);
+        Assert.Equal(1, cell.RowSpan);
+    }
+
+    [Fact]
+    public async Task BuildFromDocument_TableCellWithColspan_ParsesAttribute()
+    {
+        var root = await BuildAsync("<html><body><table><tr><td colspan=\"3\">Wide</td></tr></table></body></html>");
+
+        var cell = FindByTagName(root!, "td");
+        Assert.Equal(3, cell!.ColSpan);
+    }
+
+    [Fact]
+    public async Task BuildFromDocument_TableHeaderCellWithRowspan_ParsesAttribute()
+    {
+        var root = await BuildAsync("<html><body><table><tr><th rowspan=\"2\">Tall</th></tr></table></body></html>");
+
+        var cell = FindByTagName(root!, "th");
+        Assert.Equal(2, cell!.RowSpan);
+    }
+
+    [Fact]
+    public async Task BuildFromDocument_TableCellWithInvalidColspan_FallsBackToOne()
+    {
+        var root = await BuildAsync("<html><body><table><tr><td colspan=\"notanumber\">Cell</td></tr></table></body></html>");
+
+        var cell = FindByTagName(root!, "td");
+        Assert.Equal(1, cell!.ColSpan);
+    }
+
+    [Fact]
+    public async Task BuildFromDocument_TableElements_HaveTableLayoutBoxKinds()
+    {
+        var root = await BuildAsync("<html><body><table><tr><td>Cell</td></tr></table></body></html>");
+
+        var table = FindByTagName(root!, "table");
+        var row = FindByTagName(root!, "tr");
+        var cell = FindByTagName(root!, "td");
+
+        Assert.Equal(LayoutBoxKind.Table, table!.Kind);
+        Assert.Equal(LayoutBoxKind.TableRow, row!.Kind);
+        Assert.Equal(LayoutBoxKind.TableCell, cell!.Kind);
+    }
+
     private static LayoutBox? FindByTagName(LayoutBox box, string tagName)
     {
         if (box.TagName == tagName) return box;
