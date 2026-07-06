@@ -135,6 +135,21 @@ public sealed class BlockBox
     public float TotalHeight => Height + MarginTop + MarginBottom;
 }
 
+/// <summary>Represents a floating element's occupied region for text wrapping.</summary>
+public readonly struct FloatRegion
+{
+    public float X { get; }
+    public float Y { get; }
+    public float Width { get; }
+    public float Height { get; }
+    public string Side { get; } // "left" or "right"
+
+    public FloatRegion(float x, float y, float width, float height, string side)
+    {
+        X = x; Y = y; Width = width; Height = height; Side = side;
+    }
+}
+
 public enum BlockBoxType
 {
     Normal,
@@ -166,6 +181,9 @@ public sealed class InlineBox
     public byte[]? ImageData { get; set; }
     public int ImagePixelWidth { get; set; }
     public int ImagePixelHeight { get; set; }
+
+    /// <summary>Float-constrained content width per line for text wrapping around floats.</summary>
+    public float FloatConstrainedWidth { get; set; } = -1f;
 }
 
 public enum InlineBoxType

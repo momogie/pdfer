@@ -475,6 +475,10 @@ public partial class PdfWriter
                 float lineHeightPt = fontSizePt * GetLineHeight(style, 1.2f);
                 float contentWidthPt = block.ContentWidth * MmToPt;
 
+                // Use float-constrained width if available (text wrapping around floats)
+                if (singleInlineForDeco != null && singleInlineForDeco.FloatConstrainedWidth >= 0)
+                    contentWidthPt = singleInlineForDeco.FloatConstrainedWidth * MmToPt;
+
                 if (isSimpleText && !string.IsNullOrEmpty(simpleText))
                 {
                     WriteSimpleTextBlock(sb, simpleText, singleInlineForDeco,
@@ -484,8 +488,19 @@ public partial class PdfWriter
                 }
                 else if (block.InlineContent.Count > 0)
                 {
+                    // For inline content blocks, use the global minimum constrained width
+                    float inlineContentWidthPt = contentWidthPt;
+                    foreach (var inline in block.InlineContent)
+                    {
+                        if (inline.FloatConstrainedWidth >= 0)
+                        {
+                            float constrainedPt = inline.FloatConstrainedWidth * MmToPt;
+                            if (constrainedPt < inlineContentWidthPt)
+                                inlineContentWidthPt = constrainedPt;
+                        }
+                    }
                     WriteInlineContentBlock(sb, block,
-                        contentWidthPt, blockXPt, blockYPt,
+                        inlineContentWidthPt, blockXPt, blockYPt,
                         fontSizePt, textAlign, fontFamily, bold, italic, fontIdx,
                         marginLeftPt, marginTopPt, pageH, colorParser,
                         page.PageNumber, totalPages);

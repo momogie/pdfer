@@ -32,18 +32,10 @@ public sealed class LayoutEngine
 
     // Float tracking state
     private readonly List<FloatRegion> _floatRegions = new();
+    public IReadOnlyList<FloatRegion> FloatRegions => _floatRegions;
 
     // Positioned containing block stack
     private readonly Stack<PositionedContainingBlock> _positionedContainingBlocks = new();
-
-    private struct FloatRegion
-    {
-        public float X;
-        public float Y;
-        public float Width;
-        public float Height;
-        public string Side;
-    }
 
     private struct PositionedContainingBlock
     {
@@ -425,14 +417,7 @@ public sealed class LayoutEngine
                     }
                 }
 
-                _floatRegions.Add(new FloatRegion
-                {
-                    X = box.X,
-                    Y = box.Y,
-                    Width = box.Width,
-                    Height = box.Height + box.MarginBottom,
-                    Side = cssFloat
-                });
+                _floatRegions.Add(new FloatRegion(box.X, box.Y, box.Width, box.Height + box.MarginBottom, cssFloat ?? "left"));
                 _floatRegions.RemoveAll(r => r.Y + r.Height < _currentY - _currentPage.ContentBox.Height);
             }
 
@@ -556,6 +541,7 @@ public sealed class LayoutEngine
             if (!string.IsNullOrWhiteSpace(box.TextContent))
             {
                 float textY = isAbsolute ? box.Y : _currentY;
+                float floatConstrainedWidth = GetFloatConstrainedWidth(box);
                 var inlineBox = new InlineBox
                 {
                     Text = box.TextContent,
@@ -565,7 +551,8 @@ public sealed class LayoutEngine
                     Y = textY + box.PaddingTop,
                     Width = box.ContentWidth,
                     Height = fontSize * 1.3f,
-                    ComputedStyle = box.ComputedStyle
+                    ComputedStyle = box.ComputedStyle,
+                    FloatConstrainedWidth = floatConstrainedWidth < box.ContentWidth ? floatConstrainedWidth : -1f
                 };
                 box.InlineContent.Add(inlineBox);
             }
@@ -1325,6 +1312,39 @@ public sealed class LayoutEngine
         }
         if (start < value.Length) parts.Add(value[start..]);
         return parts;
+    }
+
+    /// <summary>
+    /// Computes the available content width for a block at a given Y position,
+    /// reduced by any float regions that intrude into its area.
+    /// </summary>
+    public float GetFloatConstrainedWidth(BlockBox box)
+    {
+        float available = box.ContentWidth;
+        float boxLeft = box.X + box.PaddingLeft + box.BorderLeft;
+        float boxTop = box.Y + box.PaddingTop + box.BorderTop;
+        float boxBottom = boxTop + box.ContentHeight;
+
+        foreach (var region in _floatRegions)
+        {
+            if (region.Y + region.Height <= boxTop || region.Y >= boxBottom)
+                continue;
+
+            if (region.Side == "left")
+            {
+                float overlap = (region.X + region.Width) - boxLeft;
+                if (overlap > 0)
+                    available -= overlap;
+            }
+            else if (region.Side == "right")
+            {
+                float overlap = (boxLeft + available) - region.X;
+                if (overlap > 0)
+                    available -= overlap;
+            }
+        }
+
+        return Math.Max(0, available);
     }
 
     public void PushPositionedContainingBlock(float x, float y, float width, float height)

@@ -122,23 +122,6 @@ public partial class PdfWriter
         if (lines.Count == 0)
             lines.Add(text);
 
-        // Text-shadow
-        float shadowOffsetXPt = 0, shadowOffsetYPt = 0, shadowBlurPt = 0;
-        string? shadowColorStr = null;
-        if (hasTextShadow)
-        {
-            var parts = textShadow.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length >= 2)
-            {
-                shadowOffsetXPt = ParseShadowLengthPdf(parts[0], fontSizePt);
-                shadowOffsetYPt = -ParseShadowLengthPdf(parts[1], fontSizePt);
-                if (parts.Length >= 3 && !parts[^1].StartsWith('#'))
-                    shadowBlurPt = ParseShadowLengthPdf(parts[2], fontSizePt);
-                if (parts.Length >= 3 && parts[^1].StartsWith('#') || parts.Length >= 4)
-                    shadowColorStr = parts[^1];
-            }
-        }
-
         sb.Append("BT\n");
         sb.AppendLine($"{_fontEntries[fontIdx].FontKey} {fontSizePt:F2} Tf");
 
@@ -222,6 +205,61 @@ public partial class PdfWriter
         }
 
         sb.Append("ET\n");
+
+        // Text-shadow: render shadow text blocks after main text
+        if (hasTextShadow)
+        {
+            var shadows = textShadow.Split(',');
+            foreach (var entry in shadows)
+            {
+                var parts = entry.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length < 2) continue;
+                int idx = parts[0] == "inset" ? 1 : 0;
+
+                float shOffXPt = ParseShadowLengthPdf(parts[idx], fontSizePt);
+                float shOffYPt = -ParseShadowLengthPdf(parts[idx + 1], fontSizePt);
+
+                if (!colorParser.TryParse(parts[^1], out var shColorDoc) || shColorDoc is not RgbColor shRgb || shRgb.A == 0)
+                    continue;
+
+                float shAlpha = shRgb.A / 255f;
+                if (shAlpha < 1f)
+                {
+                    float aR = MathF.Round(shAlpha * 10f) / 10f;
+                    string aGs = $"/GS_{aR:F1}".Replace(".", "_");
+                    sb.AppendLine($"{aGs} gs");
+                }
+
+                sb.Append("BT\n");
+                sb.AppendLine($"{_fontEntries[fontIdx].FontKey} {fontSizePt:F2} Tf");
+                sb.AppendLine($"{shRgb.R / 255f:F2} {shRgb.G / 255f:F2} {shRgb.B / 255f:F2} rg");
+
+                for (int si = 0; si < lines.Count; si++)
+                {
+                    if (string.IsNullOrEmpty(lines[si])) continue;
+                    float shLineW = MeasureTextWidth(lines[si], fontFamily, bold, italic, fontSizePt);
+                    float shLineOffsetX = si == 0 ? textIndentPt : 0;
+
+                    if (textAlign == "center")
+                        shLineOffsetX = Math.Max(0, (contentWidthPt - shLineW) / 2);
+                    else if (textAlign == "right")
+                        shLineOffsetX = Math.Max(0, contentWidthPt - shLineW);
+
+                    float shLineY = blockYPt - si * lineHeightPt + verticalOffset;
+                    if (si == 0)
+                        sb.AppendLine($"{blockXPt + shOffXPt + shLineOffsetX:F2} {shLineY + shOffYPt:F2} Td");
+                    else
+                        sb.AppendLine($"1 0 0 1 {blockXPt + shOffXPt + shLineOffsetX:F2} {shLineY + shOffYPt:F2} Tm");
+
+                    sb.AppendLine($"{FormatPdfText(lines[si])} Tj");
+                }
+
+                sb.AppendLine("ET");
+
+                if (shAlpha < 1f)
+                    sb.AppendLine("/GS_1_0 gs");
+            }
+        }
 
         var decoStyle = decoInline?.ComputedStyle ?? style;
         string? decoration = null;
