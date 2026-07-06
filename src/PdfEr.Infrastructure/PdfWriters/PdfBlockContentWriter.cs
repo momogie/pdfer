@@ -104,36 +104,82 @@ public partial class PdfWriter
             string? boxShadow = style?.GetPropertyValue("box-shadow");
             if (!string.IsNullOrWhiteSpace(boxShadow) && boxShadow != "none")
             {
-                var parts = boxShadow.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                if (parts.Length >= 4 && parts[0] != "inset")
+                var shadows = boxShadow.Split(',');
+                foreach (var shadowStr in shadows)
                 {
-                    if (colorParser.TryParse(parts[^1], out var shColor) && shColor is RgbColor shRgb && shRgb.A > 0)
+                    var parts = shadowStr.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    if (parts.Length < 3) continue;
+
+                    bool isInset = parts[0] == "inset";
+                    int idx = isInset ? 1 : 0;
+
+                    if (idx + 3 > parts.Length) continue;
+
+                    // Color is always the last component
+                    if (!colorParser.TryParse(parts[^1], out var shColor) || shColor is not RgbColor shRgb || shRgb.A == 0)
+                        continue;
+
+                    float offX = ParseShadowLength(parts[idx]);
+                    float offY = ParseShadowLength(parts[idx + 1]);
+                    float blur = (idx + 2 < parts.Length - 1) ? ParseShadowLength(parts[idx + 2]) : 0;
+                    float spread = (idx + 3 < parts.Length - 1) ? ParseShadowLength(parts[idx + 3]) : 0;
+
+                    float shOpacity = shRgb.A / 255f;
+                    if (shOpacity < 1f)
                     {
-                        float offX = ParseShadowLength(parts[0]);
-                        float offY = ParseShadowLength(parts[1]);
-                        float blur = parts.Length >= 3 ? ParseShadowLength(parts[2]) : 0;
-                        float shOpacity = shRgb.A / 255f;
-                        if (shOpacity < 1f)
-                        {
-                            float sRounded = MathF.Round(shOpacity * 10f) / 10f;
-                            string sGsName = $"/GS_{sRounded:F1}".Replace(".", "_");
-                            if (!usedOpacities!.Contains(sRounded))
-                                usedOpacities.Add(sRounded);
-                            sb.AppendLine($"{sGsName} gs");
-                        }
-                        float shLeft = rectLeftPt + offX * MmToPt;
-                        float shBottom = rectBottomPt - offY * MmToPt;
+                        float sRounded = MathF.Round(shOpacity * 10f) / 10f;
+                        string sGsName = $"/GS_{sRounded:F1}".Replace(".", "_");
+                        if (!usedOpacities!.Contains(sRounded))
+                            usedOpacities.Add(sRounded);
+                        sb.AppendLine($"{sGsName} gs");
+                    }
+
+                    float spreadPt = spread * MmToPt;
+                    float offXPt = offX * MmToPt;
+                    float offYPt = offY * MmToPt;
+
+                    if (isInset)
+                    {
+                        sb.AppendLine("q");
+                        sb.AppendLine($"{rectLeftPt:F2} {rectBottomPt:F2} {rectWidthPt:F2} {rectHeightPt:F2} re W n");
+
+                        float innerLeft = rectLeftPt + offXPt - spreadPt;
+                        float innerBottom = rectBottomPt - offYPt - spreadPt;
+                        float innerW = rectWidthPt + Math.Abs(spreadPt) * 2;
+                        float innerH = rectHeightPt + Math.Abs(spreadPt) * 2;
+
                         sb.AppendLine($"{shRgb.R / 255f:F2} {shRgb.G / 255f:F2} {shRgb.B / 255f:F2} rg");
                         if (blur > 0)
                         {
-                            float blurPt = blur * MmToPt;
-                            sb.AppendLine($"{shLeft:F2} {shBottom:F2} {rectWidthPt + blurPt * 2:F2} {rectHeightPt + blurPt * 2:F2} re f");
+                            float bPt = blur * MmToPt;
+                            innerLeft -= bPt; innerBottom -= bPt;
+                            innerW += bPt * 2; innerH += bPt * 2;
+                        }
+                        sb.AppendLine($"{innerLeft:F2} {innerBottom:F2} {innerW:F2} {innerH:F2} re f");
+                        sb.AppendLine("Q");
+                    }
+                    else
+                    {
+                        float shLeft = rectLeftPt + offXPt - spreadPt;
+                        float shBottom = rectBottomPt - offYPt - spreadPt;
+                        float shW = rectWidthPt + spreadPt * 2;
+                        float shH = rectHeightPt + spreadPt * 2;
+
+                        sb.AppendLine($"{shRgb.R / 255f:F2} {shRgb.G / 255f:F2} {shRgb.B / 255f:F2} rg");
+
+                        if (blur > 0)
+                        {
+                            float bPt = blur * MmToPt;
+                            sb.AppendLine($"{shLeft - bPt:F2} {shBottom - bPt:F2} {shW + bPt * 2:F2} {shH + bPt * 2:F2} re f");
                         }
                         else
-                            sb.AppendLine($"{shLeft:F2} {shBottom:F2} {rectWidthPt:F2} {rectHeightPt:F2} re f");
-                        if (shOpacity < 1f)
-                            sb.AppendLine("/GS_1_0 gs");
+                        {
+                            sb.AppendLine($"{shLeft:F2} {shBottom:F2} {shW:F2} {shH:F2} re f");
+                        }
                     }
+
+                    if (shOpacity < 1f)
+                        sb.AppendLine("/GS_1_0 gs");
                 }
             }
 
@@ -148,40 +194,141 @@ public partial class PdfWriter
                     sb.AppendLine($"{rectLeftPt:F2} {rectBottomPt:F2} {rectWidthPt:F2} {rectHeightPt:F2} re W n");
             }
 
-            // Background-image support
-            string? bgImage = style?.GetPropertyValue("background-image");
-            if (!string.IsNullOrWhiteSpace(bgImage) && bgImage != "none" && bgImage.StartsWith("url("))
+            // Background-image support (multiple backgrounds via comma)
+            string? bgImageRaw = style?.GetPropertyValue("background-image");
+            if (!string.IsNullOrWhiteSpace(bgImageRaw) && bgImageRaw != "none")
             {
-                var urlMatch = System.Text.RegularExpressions.Regex.Match(bgImage, @"url\([""']?([^""'\)]+)[""']?\)");
-                if (urlMatch.Success)
+                var bgImages = bgImageRaw.Split(',');
+                string? bgPosRaw = style?.GetPropertyValue("background-position");
+                string? bgSizeRaw = style?.GetPropertyValue("background-size");
+                string? bgRepeatRaw = style?.GetPropertyValue("background-repeat");
+
+                var bgPositions = bgPosRaw?.Split(',') ?? ["0% 0%"];
+                var bgSizes = bgSizeRaw?.Split(',') ?? ["auto"];
+                var bgRepeats = bgRepeatRaw?.Split(',') ?? ["repeat"];
+
+                for (int bi = 0; bi < bgImages.Length; bi++)
                 {
+                    var bgImage = bgImages[bi].Trim();
+                    if (!bgImage.StartsWith("url(")) continue;
+
+                    var urlMatch = System.Text.RegularExpressions.Regex.Match(bgImage, @"url\([""']?([^""'\)]+)[""']?\)");
+                    if (!urlMatch.Success) continue;
+
                     var imgSrc = urlMatch.Groups[1].Value;
                     var imgResult = LoadImageData(imgSrc);
-                    if (imgResult != null)
+                    if (imgResult == null) continue;
+
+                    var bgImgObjNum = WriteImage($"bg_{imgSrc}", imgResult.Data, imgResult.Width, imgResult.Height);
+                    var bgImgName = $"/Img{bgImgObjNum}";
+                    if (!pageImages.Any(p => p.Name == bgImgName))
+                        pageImages.Add((bgImgName, bgImgObjNum));
+
+                    float imgW = imgResult.Width;
+                    float imgH = imgResult.Height;
+
+                    // Parse background-size
+                    var bgSize = bi < bgSizes.Length ? bgSizes[bi].Trim() : bgSizes[^1].Trim();
+                    float renderW = rectWidthPt;
+                    float renderH = rectHeightPt;
+                    float imgAspect = imgW / imgH;
+                    float containerAspect = rectWidthPt / rectHeightPt;
+
+                    if (bgSize == "cover")
                     {
-                        var bgImgObjNum = WriteImage($"bg_{imgSrc}", imgResult.Data, imgResult.Width, imgResult.Height);
-                        var bgImgName = $"/Img{bgImgObjNum}";
-                        if (!pageImages.Any(p => p.Name == bgImgName))
-                            pageImages.Add((bgImgName, bgImgObjNum));
-
-                        string? bgRepeat = style?.GetPropertyValue("background-repeat");
-                        string? bgSize = style?.GetPropertyValue("background-size");
-
-                        float bgW = rectWidthPt;
-                        float bgH = rectHeightPt;
-                        if (bgSize != null && bgSize != "auto" && bgSize != "cover" && bgSize != "contain")
+                        if (imgAspect > containerAspect)
+                        { renderW = rectWidthPt; renderH = rectWidthPt / imgAspect; }
+                        else
+                        { renderH = rectHeightPt; renderW = rectHeightPt * imgAspect; }
+                    }
+                    else if (bgSize == "contain")
+                    {
+                        if (imgAspect > containerAspect)
+                        { renderH = rectHeightPt; renderW = rectHeightPt * imgAspect; }
+                        else
+                        { renderW = rectWidthPt; renderH = rectWidthPt / imgAspect; }
+                    }
+                    else if (bgSize != "auto")
+                    {
+                        var sizeParts = bgSize.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                        if (sizeParts.Length >= 1)
                         {
-                            var sizeParts = bgSize.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                            if (sizeParts.Length >= 1 && float.TryParse(sizeParts[0].Replace("px", "").Replace("pt", ""), out var sw))
-                                bgW = sw * MmToPt;
-                            if (sizeParts.Length >= 2 && float.TryParse(sizeParts[1].Replace("px", "").Replace("pt", ""), out var sh))
-                                bgH = sh * MmToPt;
+                            if (sizeParts[0].EndsWith('%') && float.TryParse(sizeParts[0][..^1], out var wpct))
+                                renderW = rectWidthPt * wpct / 100f;
+                else
+                            renderW = CssLengthParser.ParseCssLengthMm(sizeParts[0], rectWidthPt) * MmToPt;
                         }
+                        if (sizeParts.Length >= 2)
+                        {
+                            if (sizeParts[1].EndsWith('%') && float.TryParse(sizeParts[1][..^1], out var hpct))
+                                renderH = rectHeightPt * hpct / 100f;
+                            else
+                                renderH = CssLengthParser.ParseCssLengthMm(sizeParts[1], rectHeightPt) * MmToPt;
+                        }
+                        else if (sizeParts.Length == 1 && sizeParts[0] != "auto")
+                        {
+                            // Single value sets width, height auto
+                            renderH = renderW / imgAspect;
+                        }
+                    }
 
+                    // Parse background-position
+                    var bgPos = bi < bgPositions.Length ? bgPositions[bi].Trim() : bgPositions[^1].Trim();
+                    float posXPt = 0, posYPt = 0;
+                    var posParts = bgPos.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    if (posParts.Length >= 1)
+                    {
+                        if (posParts[0] == "center") posXPt = (rectWidthPt - renderW) / 2f;
+                        else if (posParts[0] == "right") posXPt = rectWidthPt - renderW;
+                        else if (posParts[0] == "left") posXPt = 0;
+                        else if (posParts[0].EndsWith('%') && float.TryParse(posParts[0][..^1], out var xpct))
+                            posXPt = (rectWidthPt - renderW) * xpct / 100f;
+                        else
+                            posXPt = CssLengthParser.ParseCssLengthMm(posParts[0], rectWidthPt) * MmToPt;
+                    }
+                    if (posParts.Length >= 2)
+                    {
+                        if (posParts[1] == "center") posYPt = (rectHeightPt - renderH) / 2f;
+                        else if (posParts[1] == "bottom") posYPt = rectHeightPt - renderH;
+                        else if (posParts[1] == "top") posYPt = 0;
+                        else if (posParts[1].EndsWith('%') && float.TryParse(posParts[1][..^1], out var ypct))
+                            posYPt = (rectHeightPt - renderH) * ypct / 100f;
+                        else
+                            posYPt = CssLengthParser.ParseCssLengthMm(posParts[1], rectHeightPt) * MmToPt;
+                    }
+
+                    // Parse background-repeat
+                    var bgRepeat = bi < bgRepeats.Length ? bgRepeats[bi].Trim() : bgRepeats[^1].Trim();
+
+                    if (bgRepeat == "no-repeat")
+                    {
                         sb.AppendLine("q");
-                        sb.AppendLine($"{bgW:F2} 0 0 {bgH:F2} {rectLeftPt:F2} {rectBottomPt:F2} cm");
+                        sb.AppendLine($"{renderW:F2} 0 0 {renderH:F2} {rectLeftPt + posXPt:F2} {rectBottomPt + posYPt:F2} cm");
                         sb.AppendLine($"{bgImgName} Do");
                         sb.AppendLine("Q");
+                    }
+                    else
+                    {
+                        // repeat / repeat-x / repeat-y: tile the image
+                        float stepX = bgRepeat == "repeat-y" ? rectWidthPt + 1 : renderW;
+                        float stepY = bgRepeat == "repeat-x" ? rectHeightPt + 1 : renderH;
+                        int tilesX = bgRepeat == "no-repeat" ? 1 : (int)Math.Ceiling((rectWidthPt - posXPt) / stepX) + 1;
+                        int tilesY = bgRepeat == "no-repeat" ? 1 : (int)Math.Ceiling((rectHeightPt - posYPt) / stepY) + 1;
+
+                        for (int tx = 0; tx < tilesX; tx++)
+                        {
+                            for (int ty = 0; ty < tilesY; ty++)
+                            {
+                                float tileX = rectLeftPt + posXPt + tx * stepX;
+                                float tileY = rectBottomPt + posYPt + ty * stepY;
+                                if (tileX > rectLeftPt + rectWidthPt || tileY > rectBottomPt + rectHeightPt)
+                                    continue;
+                                sb.AppendLine("q");
+                                sb.AppendLine($"{renderW:F2} 0 0 {renderH:F2} {tileX:F2} {tileY:F2} cm");
+                                sb.AppendLine($"{bgImgName} Do");
+                                sb.AppendLine("Q");
+                            }
+                        }
                     }
                 }
             }
