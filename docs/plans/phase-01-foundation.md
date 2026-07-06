@@ -63,9 +63,20 @@ Konsep first-class yang diperkenalkan (mengganti kursor global):
       `ComputedStyle` ada sebagai tipe siap pakai, tapi belum dipanggil dari pipeline manapun.
       Juga belum meng-cover semua properti (width/height/margin/padding % masih perlu
       containing block, sengaja belum diresolusi di sini).
-- [ ] **Pass 1 — intrinsic sizing**: tipe `IntrinsicSizes` sudah ada di `BoxTree.cs`, tapi
-      **belum ada kode yang menghitungnya**. Tebakan `textLen * fontSize * 0.5f` di
-      LayoutEngine masih dipakai apa adanya.
+- [x] **Pass 1 — intrinsic sizing**: `IntrinsicSizeCalculator` di
+      [IntrinsicSizeCalculator.cs](../../src/PdfEr.Core/Application/HtmlProcessing/IntrinsicSizeCalculator.cs)
+      menghitung `min-content`/`max-content` width bottom-up pakai `IFontRegistry.GetMetrics`
+      (advance width nyata per glyph), bukan tebakan `textLen * fontSize * 0.5f`. Min-content
+      = kata terpanjang tak-terpisah (split whitespace — aproksimasi UAX#14 penuh, itu
+      pekerjaan Fase 3); max-content = seluruh teks dalam satu baris. Container block
+      = max lebar antar-child; container inline/anonymous = max-content dijumlah
+      (children mengalir di baris sama), min-content tetap kata terlebar. Padding+border
+      ikut ditambahkan (margin sengaja tidak, konsisten dengan definisi shrink-to-fit
+      terhadap border box). **Catatan jujur**: fallback tanpa font metrics masih pakai
+      heuristik lama (`* 0.5f`) — hanya dipakai kalau font benar-benar tidak terdaftar,
+      bukan jalur utama. **Belum dikonsumsi** LayoutEngine sama sekali — tebakan
+      `textLen * fontSize * 0.5f` di LayoutEngine.cs masih jalan apa adanya sampai
+      Pass 2 (placement) menggantikan pemanggil-pemanggilnya.
 - [ ] **Pass 2 — placement**: tipe `BoxGeometry` sudah ada, **belum ada placement pass**.
       `fontSize * 1.3f` di [LayoutEngine.cs:366-367](../../src/PdfEr.Core/Application/HtmlProcessing/LayoutEngine.cs#L366-L367)
       masih jalan seperti sebelumnya.
@@ -101,10 +112,18 @@ masalah nyata begitu kode baru membaca computed `display`. Diverifikasi lewat:
   default (0.998–0.999 di semua kategori) — bukti empiris pipeline streaming benar-benar
   tidak terpengaruh, bukan cuma asumsi.
 
-**Belum dikerjakan (sengaja, untuk sesi terpisah)**: Pass 1 (intrinsic sizing), Pass 2
-(placement), migrasi tag handler, adapter paint, anonymous-wrapping untuk table/flex/grid
-container. Fase 1 tetap XL; dua slice ini baru fondasi tipe data + pohon box statis,
-belum ada satu pun angka geometri yang dihitung box-tree pipeline.
+**Sesi 3**: `IntrinsicSizeCalculator` — Pass 1 sungguhan, min/max-content width dari font
+metrics nyata. Tidak menyentuh `LayoutEngine`/`PdfConverterService` sama sekali (murni
+tipe+kalkulator baru dikonsumsi lewat unit test langsung), jadi verifikasi cukup lewat
+187/187 `PdfEr.Core.Tests` (10 test baru `IntrinsicSizeCalculatorTests`, expected value
+dihitung tangan dengan advance width tetap 5pt/karakter) stabil 3x run, plus 54
+Infrastructure + 46 Integration tetap hijau. Build solution penuh tanpa error.
+
+**Belum dikerjakan (sengaja, untuk sesi terpisah)**: Pass 2 (placement — ini yang
+sebenarnya menghasilkan `BoxGeometry`/X,Y/lebar-tinggi final), migrasi tag handler,
+adapter paint, anonymous-wrapping untuk table/flex/grid container. Fase 1 tetap XL;
+tiga slice ini baru tipe data + pohon box + lebar intrinsik — **belum ada satu pun
+kotak yang benar-benar ditempatkan** (X/Y/Height tetap default/kosong di `BoxGeometry`).
 
 ## Migrasi tag handler
 
