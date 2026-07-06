@@ -1632,6 +1632,178 @@ public class CssWidthHeightTests
     }
 }
 
+
+public class FlexGridPositionTests
+{
+    private static (LayoutEngine engine, PdfConverterConfiguration config, PageLayout page) CreateEngine()
+    {
+        var parser = new CssParser();
+        var merger = new CssMerger(parser, new CssNormalizer());
+        var normalizer = new CssNormalizer();
+        var converter = NSubstitute.Substitute.For<IUnitConverter>();
+        var engine = new LayoutEngine(merger, normalizer, converter);
+        var config = new PdfConverterConfiguration { Title = "Test" };
+        var doc = engine.CreateDocumentLayout(config);
+        return (engine, config, doc.Pages[0]);
+    }
+
+    [Fact]
+    public void CreateBlock_WithDisplayFlex_SetsFlexContainer()
+    {
+        var (engine, config, page) = CreateEngine();
+        var attrs = new Dictionary<string, string> { { "style", "display: flex" } };
+        var box = engine.CreateBlock("div", attrs);
+        engine.LayoutBlock(box, config);
+        Assert.Equal(BlockBoxType.FlexContainer, box.Type);
+    }
+
+    [Fact]
+    public void CreateBlock_WithDisplayInlineFlex_SetsFlexContainer()
+    {
+        var (engine, config, page) = CreateEngine();
+        var attrs = new Dictionary<string, string> { { "style", "display: inline-flex" } };
+        var box = engine.CreateBlock("div", attrs);
+        engine.LayoutBlock(box, config);
+        Assert.Equal(BlockBoxType.FlexContainer, box.Type);
+    }
+
+    [Fact]
+    public void CreateBlock_WithFlexWrap_ParsesProperty()
+    {
+        var (engine, config, page) = CreateEngine();
+        var attrs = new Dictionary<string, string> { { "style", "display: flex; flex-wrap: wrap" } };
+        var box = engine.CreateBlock("div", attrs);
+        engine.LayoutBlock(box, config);
+        Assert.Equal("wrap", box.FlexWrap);
+    }
+
+    [Fact]
+    public void CreateBlock_WithColumnGap_ParsesProperty()
+    {
+        var (engine, config, page) = CreateEngine();
+        var attrs = new Dictionary<string, string> { { "style", "display: flex; column-gap: 5mm" } };
+        var box = engine.CreateBlock("div", attrs);
+        engine.LayoutBlock(box, config);
+        Assert.Equal(5f, box.FlexGap, 1);
+    }
+
+    [Fact]
+    public void CreateBlock_WithDisplayGrid_SetsGridContainer()
+    {
+        var (engine, config, page) = CreateEngine();
+        var attrs = new Dictionary<string, string> { { "style", "display: grid" } };
+        var box = engine.CreateBlock("div", attrs);
+        engine.LayoutBlock(box, config);
+        Assert.True(box.IsGrid);
+        Assert.Equal(BlockBoxType.FlexContainer, box.Type);
+    }
+
+    [Fact]
+    public void CreateBlock_WithGridTemplateColumns_ParsesFixedWidths()
+    {
+        var (engine, config, page) = CreateEngine();
+        var attrs = new Dictionary<string, string> { { "style", "display: grid; grid-template-columns: 50mm 100mm" } };
+        var box = engine.CreateBlock("div", attrs);
+        engine.LayoutBlock(box, config);
+        Assert.Equal(2, box.GridColumnWidths.Count);
+        Assert.Equal(50f, box.GridColumnWidths[0], 1);
+        Assert.Equal(100f, box.GridColumnWidths[1], 1);
+    }
+
+    [Fact]
+    public void CreateBlock_WithGridTemplateColumns_Repeat_Parses()
+    {
+        var (engine, config, page) = CreateEngine();
+        var attrs = new Dictionary<string, string> { { "style", "display: grid; grid-template-columns: repeat(3, 40mm)" } };
+        var box = engine.CreateBlock("div", attrs);
+        engine.LayoutBlock(box, config);
+        Assert.Equal(3, box.GridColumnWidths.Count);
+        Assert.Equal(40f, box.GridColumnWidths[0], 1);
+        Assert.Equal(40f, box.GridColumnWidths[1], 1);
+        Assert.Equal(40f, box.GridColumnWidths[2], 1);
+    }
+
+    [Fact]
+    public void CreateBlock_WithRowGap_ParsesProperty()
+    {
+        var (engine, config, page) = CreateEngine();
+        var attrs = new Dictionary<string, string> { { "style", "display: grid; row-gap: 3mm; grid-template-columns: 1fr" } };
+        var box = engine.CreateBlock("div", attrs);
+        engine.LayoutBlock(box, config);
+        Assert.Equal(3f, box.GridRowGap, 1);
+    }
+
+    [Fact]
+    public void CreateBlock_WithFloatLeft_SetsType()
+    {
+        var (engine, config, page) = CreateEngine();
+        var attrs = new Dictionary<string, string> { { "style", "float: left; width: 50mm; height: 20mm" } };
+        var box = engine.CreateBlock("div", attrs);
+        engine.LayoutBlock(box, config);
+        Assert.Equal(BlockBoxType.FloatLeft, box.Type);
+    }
+
+    [Fact]
+    public void CreateBlock_WithFloatRight_SetsType()
+    {
+        var (engine, config, page) = CreateEngine();
+        var attrs = new Dictionary<string, string> { { "style", "float: right; width: 50mm" } };
+        var box = engine.CreateBlock("div", attrs);
+        engine.LayoutBlock(box, config);
+        Assert.Equal(BlockBoxType.FloatRight, box.Type);
+    }
+
+    [Fact]
+    public void CreateBlock_WithPositionRelative_SetsType()
+    {
+        var (engine, config, page) = CreateEngine();
+        var attrs = new Dictionary<string, string> { { "style", "position: relative; top: 5mm; left: 10mm; height: 20mm; width: 50mm" } };
+        var box = engine.CreateBlock("div", attrs);
+        engine.LayoutBlock(box, config);
+        Assert.Equal(BlockBoxType.Relative, box.Type);
+    }
+
+    [Fact]
+    public void CreateBlock_WithPositionAbsolute_SetsType()
+    {
+        var (engine, config, page) = CreateEngine();
+        var attrs = new Dictionary<string, string> { { "style", "position: absolute; top: 10mm; left: 15mm; width: 50mm; height: 20mm" } };
+        var box = engine.CreateBlock("div", attrs);
+        engine.LayoutBlock(box, config);
+        Assert.Equal(BlockBoxType.Absolute, box.Type);
+    }
+
+    [Fact]
+    public void CreateBlock_WithPositionFixed_SetsType()
+    {
+        var (engine, config, page) = CreateEngine();
+        var attrs = new Dictionary<string, string> { { "style", "position: fixed; top: 5mm; left: 5mm; width: 40mm; height: 15mm" } };
+        var box = engine.CreateBlock("div", attrs);
+        engine.LayoutBlock(box, config);
+        Assert.Equal(BlockBoxType.Fixed, box.Type);
+    }
+
+    [Fact]
+    public void CreateBlock_WithZIndex_ParsesProperty()
+    {
+        var (engine, config, page) = CreateEngine();
+        var attrs = new Dictionary<string, string> { { "style", "z-index: 10" } };
+        var box = engine.CreateBlock("div", attrs);
+        engine.LayoutBlock(box, config);
+        Assert.True(box.HasZIndex);
+        Assert.Equal(10f, box.ZIndex);
+    }
+
+    [Fact]
+    public void CreateBlock_WithAlignContent_ParsesProperty()
+    {
+        var (engine, config, page) = CreateEngine();
+        var attrs = new Dictionary<string, string> { { "style", "display: flex; align-content: center" } };
+        var box = engine.CreateBlock("div", attrs);
+        engine.LayoutBlock(box, config);
+        Assert.Equal("center", box.AlignContent);
+    }
+}
 public sealed class ListHandlerTests
 {
     [Fact]
