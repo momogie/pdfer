@@ -55,6 +55,21 @@ public sealed class BlockPlacer
         {
             geometry.Height = box.Style.FontSizeMm * AutoLineHeightFactor;
         }
+        else if (box.Kind == LayoutBoxKind.LineBreak)
+        {
+            // Forces vertical space like a single empty line, matching
+            // BreakHandler's legacy behavior (a text run consisting of "\n").
+            geometry.Height = box.Style.FontSizeMm * AutoLineHeightFactor;
+        }
+        else if (box.Kind == LayoutBoxKind.Image)
+        {
+            // An <img>'s box has no children to derive height from -- its
+            // size comes from its own pixel dimensions (converted to mm at
+            // 96 DPI by BoxTreeBuilder), not the containing block.
+            const float PxToMm = 25.4f / 96f;
+            geometry.Width = box.ImagePixelWidth * PxToMm;
+            geometry.Height = box.ImagePixelHeight * PxToMm;
+        }
         else if (box.Children.Count == 0)
         {
             geometry.Height = 0;

@@ -8,12 +8,14 @@ namespace PdfEr.IntegrationTests;
 
 /// <summary>
 /// End-to-end tests for the box-tree pipeline (docs/plans/phase-01-foundation.md),
-/// gated behind PdfConverterConfiguration.UseBoxTreeLayout. Deliberately limited to
-/// simple documents: BoxTreeBuilder does not dispatch to ITagHandler yet, so lists,
-/// tables, links, and images are not expected to render correctly through this path.
-/// These tests only confirm the wired pipeline produces valid, non-empty PDF output
-/// and does not throw -- not feature parity with the streaming pipeline (that's
-/// measured separately via the Phase 0 fidelity harness).
+/// gated behind PdfConverterConfiguration.UseBoxTreeLayout. BoxTreeBuilder handles
+/// lists (ul/ol/li with counters), images, links, and line breaks directly (it does
+/// not dispatch to ITagHandler), but tables, floats, and flex/grid layout are still
+/// out of scope -- those are separate, larger pieces of work (Phase 5 tables, Phase 7
+/// flex/grid). These tests confirm the wired pipeline produces valid, non-empty PDF
+/// output and does not throw for the tag set it does support -- not full feature
+/// parity with the streaming pipeline (that's measured via the Phase 0 fidelity
+/// harness and the exploratory BoxTreePipelineFidelityTests).
 /// </summary>
 public sealed class BoxTreePipelineIntegrationTests : IDisposable
 {
@@ -91,6 +93,39 @@ public sealed class BoxTreePipelineIntegrationTests : IDisposable
             <body><div><p>Styled content</p></div></body>
             </html>
             """;
+
+        var pdf = converter.ConvertHtmlToPdf(html, BoxTreeConfig());
+
+        Assert.True(pdf.Length > 10);
+    }
+
+    [Fact]
+    public void ConvertHtmlToPdf_BoxTreeLayout_UnorderedList_DoesNotThrow()
+    {
+        var converter = _services.GetRequiredService<IPdfConverter>();
+        var html = "<html><body><ul><li>First item</li><li>Second item</li></ul></body></html>";
+
+        var pdf = converter.ConvertHtmlToPdf(html, BoxTreeConfig());
+
+        Assert.True(pdf.Length > 10);
+    }
+
+    [Fact]
+    public void ConvertHtmlToPdf_BoxTreeLayout_OrderedList_DoesNotThrow()
+    {
+        var converter = _services.GetRequiredService<IPdfConverter>();
+        var html = "<html><body><ol><li>First</li><li>Second</li><li>Third</li></ol></body></html>";
+
+        var pdf = converter.ConvertHtmlToPdf(html, BoxTreeConfig());
+
+        Assert.True(pdf.Length > 10);
+    }
+
+    [Fact]
+    public void ConvertHtmlToPdf_BoxTreeLayout_LinkAndLineBreak_DoesNotThrow()
+    {
+        var converter = _services.GetRequiredService<IPdfConverter>();
+        var html = "<html><body><p>Visit <a href=\"https://example.com\">this link</a><br>for more.</p></body></html>";
 
         var pdf = converter.ConvertHtmlToPdf(html, BoxTreeConfig());
 

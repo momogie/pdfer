@@ -29,6 +29,8 @@ public class BoxTreePipelineFidelityTests : IAsyncLifetime
     [Theory]
     [InlineData("<html><body><p>Hello box tree pipeline</p></body></html>")]
     [InlineData("<html><body><div><h1>Title</h1><p>Some paragraph text.</p></div></body></html>")]
+    [InlineData("<html><body><ul><li>First item</li><li>Second item</li><li>Third item</li></ul></body></html>")]
+    [InlineData("<html><body><ol><li>Alpha</li><li>Beta</li></ol></body></html>")]
     public async Task BoxTreePipeline_SimpleDocument_ProducesComparableOutput(string html)
     {
         var pdfChromium = await _helper!.RenderHtmlViaChromiumAsync(html);

@@ -50,6 +50,7 @@ public sealed class PdfConverterService : IPdfConverter
         TagRegistry tagRegistry,
         PdfWriter pdfWriter,
         IFontRegistry fontRegistry,
+        IImageService imageService,
         PdfConverterConfiguration defaultConfig)
     {
         _htmlParser = htmlParser;
@@ -62,7 +63,7 @@ public sealed class PdfConverterService : IPdfConverter
         _fontRegistry = fontRegistry;
         _defaultConfig = defaultConfig;
 
-        _boxTreeBuilder = new BoxTreeBuilder(_cssMerger, _cssNormalizer);
+        _boxTreeBuilder = new BoxTreeBuilder(_cssMerger, _cssNormalizer, imageService);
         _intrinsicSizeCalculator = new IntrinsicSizeCalculator(_fontRegistry);
         _blockPlacer = new BlockPlacer();
         _boxTreePaintAdapter = new BoxTreePaintAdapter();

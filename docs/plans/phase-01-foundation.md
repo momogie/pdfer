@@ -134,7 +134,7 @@ Konsep first-class yang diperkenalkan (mengganti kursor global):
       coupling dua arah antar proyek Domain/Application saat ini — perlu disatukan saat
       `IUnitConverter` dibereskan.
 
-## Progres nyata (7 sesi — bukan Fase 1 selesai, lihat status per item di atas)
+## Progres nyata (8 sesi — bukan Fase 1 selesai, lihat status per item di atas)
 
 **Sesi 1**: tipe data box-tree tambahan (`LayoutBox`, `ComputedStyle`, dll.), tanpa
 mengubah pipeline streaming. Ditemukan & diperbaiki bug race-condition di `CssMerger`
@@ -198,15 +198,49 @@ ini). Diverifikasi: 209/209 `PdfEr.Core.Tests` stabil 3x run, 51/51 Integration
 lama benar-benar tidak terpengaruh oleh percabangan baru ini. Build solution penuh
 tanpa error.
 
+**Sesi 8**: migrasi tag handler untuk subset yang paling umum. `BoxTreeBuilder` sekarang
+menangani langsung (tanpa dispatch ke `ITagHandler`, meniru perilakunya):
+- **`ul`/`ol`/`li`**: `ListState` (tipe yang sama dipakai streaming pipeline) dilacak
+  lewat stack per level nesting — counter per-list independen, `start` attribute
+  dihormati, marker `•`/`1.`/dst tersimpan di `LayoutBox.ListMarker`.
+- **`img`**: `IImageService` (opsional — `null` = tidak ada gambar dihasilkan, aman
+  dites) memuat byte gambar; dimensi piksel dari atribut `width`/`height` atau ukuran
+  natural, dikonversi px→mm di 96 DPI persis seperti `ImgHandler`. `LayoutBoxKind.Image`
+  baru, `BlockPlacer` menempatkannya pakai ukuran piksel sendiri (bukan mengisi parent).
+- **`a`**: `href`/`name` → `LayoutBox.LinkUrl`/`AnchorName`.
+- **`br`**: `LayoutBoxKind.LineBreak` baru, diberi tinggi placeholder satu baris di
+  `BlockPlacer` sama seperti auto line-height.
+
+`BoxTreePaintAdapter` diperluas: `Image`/`LineBreak` diratakan jadi `InlineBox` (bukan
+`BlockBox` bersarang) dengan `InlineBoxType.Image`/`LineBreak`; `LinkUrl`/`AnchorName`
+dan marker list (`TextContent` pada `BlockBox` milik `li`) ikut disalin.
+`PdfConverterService` sekarang menyuntikkan `IImageService` (sudah terdaftar di DI,
+tak perlu ubah `DependencyInjection.cs`).
+
+**Sengaja masih di luar cakupan** (algoritma layout sendiri, bukan sekadar box
+generation — pantas jadi fase terpisah seperti sudah direncanakan): **tabel** (Fase 5),
+**flex/grid** (Fase 7), **float**, dan **positioning** (relative/absolute) — semua
+`LayoutBoxKind` itu masih diperlakukan seperti block polos di `BlockPlacer`. Form
+input, SVG, dan elemen di luar daftar (`table`, `blockquote` styling detail, dll.)
+juga belum ada penanganan khusus.
+
+Diverifikasi: 220/220 `PdfEr.Core.Tests` (8 test baru `BoxTreeBuilderTests`: unordered
+list, ordered list dengan/tanpa `start`, nested list counter independen, anchor
+href/name, line break, image dengan/tanpa service, image tanpa src, override
+width/height) stabil 3x run; 54/54 Integration (8 test baru: list/link/br tidak
+throw, plus semua test sebelumnya); 54 Infrastructure tetap hijau; harness fidelity
+utama Fase 0 (streaming) **identik** (0.998–0.999); harness eksploratif box-tree
+sekarang 4 kasus (tambah `ul`/`ol`) semua **SSIM 0.9999–1.0000** vs Chromium — catatan
+jujur: ini dokumen sesederhana yang diuji, bukan bukti fidelity list menyeluruh
+(implementasi SSIM juga aproksimasi kasar, lihat catatan di `phase-00-harness.md`).
+Build solution penuh tanpa error.
+
 **Belum dikerjakan (sengaja, untuk sesi terpisah)**: margin collapsing parent/first-child,
 parent/last-child, dan empty-block self-collapsing; Inline Formatting Context sungguhan
-(line box asli, bukan placeholder satu-baris); placement khusus untuk
-float/position/table/flex/grid; **migrasi tag handler** (ini yang paling penting
-berikutnya — tanpa ini, box-tree pipeline tidak bisa menangani dokumen nyata sama
-sekali di luar teks/blok polos: tidak ada list marker, tidak ada tabel, tidak ada
-gambar). Fase 1 tetap XL; tujuh slice sejauh ini membuktikan arsitekturnya bekerja
-untuk kasus sederhana — pekerjaan besar berikutnya adalah memperluas cakupan fitur,
-bukan lagi membangun fondasi.
+(line box asli/word-wrap, bukan placeholder satu-baris); layout tabel/flex/grid/float/
+positioning sungguhan (lihat di atas). Fase 1 sudah mencakup pondasi + subset tag umum;
+sisa pekerjaan besar adalah layout algorithm per-fitur yang masing-masing sudah
+punya fase sendiri di roadmap (5, 6, 7).
 
 ## Migrasi tag handler
 

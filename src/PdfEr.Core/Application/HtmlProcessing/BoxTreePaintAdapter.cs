@@ -41,37 +41,73 @@ public sealed class BoxTreePaintAdapter
     }
 
     /// <summary>
-    /// Inline-level content (Text/Inline/Anonymous) is flattened onto the
-    /// parent BlockBox's InlineContent list. An Anonymous box's own children
-    /// are walked so their text ends up on the same parent; a Text box becomes
-    /// one InlineBox directly.
+    /// Inline-level content (Text/Inline/Anonymous/Image/LineBreak) is
+    /// flattened onto the parent BlockBox's InlineContent list. An
+    /// Inline/Anonymous container's own children are walked so their content
+    /// ends up on the same parent; Text/Image/LineBreak become one InlineBox
+    /// directly, mirroring how ImgHandler/BreakHandler attach InlineBox
+    /// entries in the streaming pipeline.
     /// </summary>
     private void AddInlineContent(LayoutBox box, BlockBox parentBlock)
     {
-        if (box.Kind == LayoutBoxKind.Text)
+        switch (box.Kind)
         {
-            parentBlock.InlineContent.Add(new InlineBox
-            {
-                TagName = box.TagName,
-                Text = box.TextContent,
-                X = box.Geometry.X,
-                Y = box.Geometry.Y,
-                Width = box.Geometry.Width,
-                Height = box.Geometry.Height,
-                ComputedStyle = box.Style.Declarations,
-                Type = InlineBoxType.Text,
-            });
-            return;
-        }
+            case LayoutBoxKind.Text:
+                parentBlock.InlineContent.Add(new InlineBox
+                {
+                    TagName = box.TagName,
+                    Text = box.TextContent,
+                    X = box.Geometry.X,
+                    Y = box.Geometry.Y,
+                    Width = box.Geometry.Width,
+                    Height = box.Geometry.Height,
+                    ComputedStyle = box.Style.Declarations,
+                    Type = InlineBoxType.Text,
+                    LinkUrl = box.LinkUrl,
+                });
+                return;
 
-        // Inline/Anonymous container: no visual box of its own in the legacy
-        // model, so recurse into its children to reach the Text leaves.
-        foreach (var child in box.Children)
-            AddInlineContent(child, parentBlock);
+            case LayoutBoxKind.Image:
+                parentBlock.InlineContent.Add(new InlineBox
+                {
+                    TagName = "img",
+                    X = box.Geometry.X,
+                    Y = box.Geometry.Y,
+                    Width = box.Geometry.Width,
+                    Height = box.Geometry.Height,
+                    ComputedStyle = box.Style.Declarations,
+                    Type = InlineBoxType.Image,
+                    ImageSource = box.ImageSource,
+                    ImageData = box.ImageData,
+                    ImagePixelWidth = box.ImagePixelWidth,
+                    ImagePixelHeight = box.ImagePixelHeight,
+                });
+                return;
+
+            case LayoutBoxKind.LineBreak:
+                parentBlock.InlineContent.Add(new InlineBox
+                {
+                    TagName = "br",
+                    X = box.Geometry.X,
+                    Y = box.Geometry.Y,
+                    Height = box.Geometry.Height,
+                    ComputedStyle = box.Style.Declarations,
+                    Type = InlineBoxType.LineBreak,
+                });
+                return;
+
+            default:
+                // Inline/Anonymous container: no visual box of its own in the
+                // legacy model, so recurse into its children to reach the leaves.
+                foreach (var child in box.Children)
+                    AddInlineContent(child, parentBlock);
+                return;
+        }
     }
 
     private static bool IsInlineLevel(LayoutBox box) =>
-        box.Kind is LayoutBoxKind.Text or LayoutBoxKind.Inline or LayoutBoxKind.Anonymous;
+        box.Kind is LayoutBoxKind.Text or LayoutBoxKind.Inline or LayoutBoxKind.Anonymous
+            or LayoutBoxKind.Image or LayoutBoxKind.LineBreak;
 
     private static BlockBox CreateBlockBox(LayoutBox box)
     {
@@ -97,6 +133,11 @@ public sealed class BoxTreePaintAdapter
             MarginLeft = geometry.MarginLeft,
             MarginRight = geometry.MarginRight,
             Type = BlockBoxType.Normal,
+            LinkUrl = box.LinkUrl,
+            AnchorName = box.AnchorName,
+            // Mirrors ListItemHandler: the marker ("1.", "•") is the <li> box's
+            // own TextContent, separate from its children's inline text.
+            TextContent = box.Kind == LayoutBoxKind.Block ? box.ListMarker : null,
         };
     }
 }

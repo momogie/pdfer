@@ -28,6 +28,21 @@ public sealed class LayoutBox
     /// <summary>Text content for a box generated from a DOM text node (Kind == Text).</summary>
     public string? TextContent { get; set; }
 
+    /// <summary>List marker text (e.g. "1.", "•") for a box generated from an &lt;li&gt;.</summary>
+    public string? ListMarker { get; set; }
+
+    /// <summary>Link target for a box generated from an &lt;a href&gt;.</summary>
+    public string? LinkUrl { get; set; }
+
+    /// <summary>Anchor name for a box generated from an &lt;a name&gt;.</summary>
+    public string? AnchorName { get; set; }
+
+    /// <summary>Original src attribute for a box generated from &lt;img&gt; (Kind == Image).</summary>
+    public string? ImageSource { get; set; }
+    public byte[]? ImageData { get; set; }
+    public int ImagePixelWidth { get; set; }
+    public int ImagePixelHeight { get; set; }
+
     /// <summary>Populated by Pass 1 (intrinsic sizing), consumed by Pass 2 (placement).</summary>
     public IntrinsicSizes? Intrinsic { get; set; }
 
@@ -53,6 +68,8 @@ public enum LayoutBoxKind
     TableCell,
     FlexContainer,
     GridContainer,
+    Image,
+    LineBreak,
 }
 
 /// <summary>
