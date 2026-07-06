@@ -23,6 +23,7 @@ public partial class PdfWriter
     private string? _pdfVersion;
     private readonly Dictionary<string, int> _fontObjects = new();
     private readonly Dictionary<string, int> _imageObjects = new();
+    private readonly Dictionary<string, int> _patternObjects = new();
     private int _pagesRootRef;
     private readonly List<int> _pageRefs = new();
     private readonly IFontRegistry? _fontRegistry;
@@ -65,6 +66,7 @@ public partial class PdfWriter
         _objectOffsets.Clear();
         _fontObjects.Clear();
         _imageObjects.Clear();
+        _patternObjects.Clear();
         _pageRefs.Clear();
         _fontEntries.Clear();
         _fontKeyToIndex.Clear();
@@ -168,7 +170,8 @@ public partial class PdfWriter
             var fontResources = BuildFontResourcesDict(pageFontIndices[i]);
             var xObjectResources = BuildXObjectDict(pageImageRefs[i]);
             var extGStateResources = BuildExtGStateDict(pageOpacities[i]);
-            _buffer.AppendLine($"   /Resources << /Font << {fontResources} >> {xObjectResources} {extGStateResources}>>");
+            var patternResources = BuildPatternDict(pageImageRefs[i]);
+            _buffer.AppendLine($"   /Resources << /Font << {fontResources} >> {xObjectResources} {extGStateResources} {patternResources}>>");
 
             // Add link annotations if any
             var annots = linkAnnotObjNums[i];
@@ -253,6 +256,18 @@ public partial class PdfWriter
         if (parts.Count == 0)
             return "/F1 0 R";
         return string.Join(" ", parts);
+    }
+
+    internal string BuildPatternDict(List<(string Name, int ObjNum)> images)
+    {
+        if (_patternObjects.Count == 0)
+            return "";
+
+        var parts = new List<string>();
+        foreach (var (name, objNum) in _patternObjects)
+            parts.Add($"/{name} {objNum} 0 R");
+
+        return $"/Pattern << {string.Join(" ", parts)} >> ";
     }
 
     internal static string BuildXObjectDict(List<(string Name, int ObjNum)> images)
@@ -695,6 +710,85 @@ public partial class PdfWriter
             _fontUsedChars[fontName] = new HashSet<int>();
         foreach (char c in text)
             _fontUsedChars[fontName].Add(c);
+    }
+
+    /// <summary>
+    /// Writes a PDF shading pattern for use as a fill. Returns the pattern object number.
+    /// </summary>
+    public int WriteShadingPattern(string name, int shadingType, float[] coords,
+        (float r, float g, float b)[] colors, float[] stops)
+    {
+        if (_patternObjects.TryGetValue(name, out var existing))
+            return existing;
+
+        // Write shading function (stitching function for multiple stops)
+        int functionNum;
+        if (colors.Length == 2)
+        {
+            // Single exponential function
+            functionNum = AllocateObjectNumber();
+            RecordObjectOffset(functionNum);
+            _buffer.AppendLine($"{functionNum} 0 obj");
+            _buffer.AppendLine("<< /FunctionType 2");
+            _buffer.AppendLine($"   /Domain [0 1]");
+            _buffer.AppendLine($"   /C0 [{colors[0].r:F3} {colors[0].g:F3} {colors[0].b:F3}]");
+            _buffer.AppendLine($"   /C1 [{colors[1].r:F3} {colors[1].g:F3} {colors[1].b:F3}]");
+            _buffer.AppendLine("   /N 1");
+            _buffer.AppendLine(">>");
+            _buffer.AppendLine("endobj");
+        }
+        else
+        {
+            // Stitching function for 3+ stops
+            var funcNums = new List<int>();
+            for (int i = 0; i < colors.Length - 1; i++)
+            {
+                var fn = AllocateObjectNumber();
+                RecordObjectOffset(fn);
+                _buffer.AppendLine($"{fn} 0 obj");
+                _buffer.AppendLine("<< /FunctionType 2");
+                _buffer.AppendLine("   /Domain [0 1]");
+                _buffer.AppendLine($"   /C0 [{colors[i].r:F3} {colors[i].g:F3} {colors[i].b:F3}]");
+                _buffer.AppendLine($"   /C1 [{colors[i + 1].r:F3} {colors[i + 1].g:F3} {colors[i + 1].b:F3}]");
+                _buffer.AppendLine("   /N 1");
+                _buffer.AppendLine(">>");
+                _buffer.AppendLine("endobj");
+                funcNums.Add(fn);
+            }
+
+            functionNum = AllocateObjectNumber();
+            RecordObjectOffset(functionNum);
+            _buffer.AppendLine($"{functionNum} 0 obj");
+            _buffer.AppendLine("<< /FunctionType 3");
+            _buffer.AppendLine($"   /Functions [{string.Join(" ", funcNums.Select(f => $"{f} 0 R"))}]");
+            _buffer.AppendLine($"   /Bounds [{string.Join(" ", stops[1..^1].Select(s => s.ToString("F3")))}]");
+            _buffer.AppendLine($"   /Encode [{string.Join(" ", Enumerable.Repeat("0 1", colors.Length - 1))}]");
+            _buffer.AppendLine(">>");
+            _buffer.AppendLine("endobj");
+        }
+
+        // Write shading dictionary
+        var shadingNum = AllocateObjectNumber();
+        RecordObjectOffset(shadingNum);
+        _buffer.AppendLine($"{shadingNum} 0 obj");
+        _buffer.AppendLine("<< /ShadingType " + shadingType);
+        _buffer.AppendLine("   /ColorSpace /DeviceRGB");
+        _buffer.AppendLine($"   /Coords [{string.Join(" ", coords.Select(c => c.ToString("F2")))}]");
+        _buffer.AppendLine($"   /Function {functionNum} 0 R");
+        _buffer.AppendLine($">>");
+        _buffer.AppendLine("endobj");
+
+        // Write pattern
+        var patternNum = AllocateObjectNumber();
+        RecordObjectOffset(patternNum);
+        _buffer.AppendLine($"{patternNum} 0 obj");
+        _buffer.AppendLine("<< /Type /Pattern /PatternType 2");
+        _buffer.AppendLine($"   /Shading {shadingNum} 0 R");
+        _buffer.AppendLine(">>");
+        _buffer.AppendLine("endobj");
+
+        _patternObjects[name] = patternNum;
+        return patternNum;
     }
 
     public int WriteImage(string imageName, byte[] imageData, int width, int height)

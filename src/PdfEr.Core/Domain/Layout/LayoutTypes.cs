@@ -109,6 +109,8 @@ public sealed class BlockBox
     public float GridRowGap { get; set; }
     public float GridColumnGap { get; set; }
     public string? GridAutoFlow { get; set; }
+    public string? GridTemplateAreas { get; set; }
+    public string? GridArea { get; set; }
     public int GridColumnStart { get; set; }
     public int GridColumnEnd { get; set; }
     public int GridRowStart { get; set; }

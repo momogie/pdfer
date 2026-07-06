@@ -257,6 +257,7 @@ public sealed class LayoutEngine
                 box.GridRowHeights = ParseGridTemplateColumns(templateRows, _currentPage.ContentBox.Height, box.GridRowGap);
 
                 box.GridAutoFlow = box.ComputedStyle?.GetPropertyValue("grid-auto-flow") ?? "row";
+                box.GridTemplateAreas = box.ComputedStyle?.GetPropertyValue("grid-template-areas");
             }
 
             _currentY += box.MarginTop;
@@ -772,14 +773,55 @@ public sealed class LayoutEngine
         child.AlignSelf = (!string.IsNullOrWhiteSpace(alignSelf) && alignSelf != "auto") ? alignSelf : null;
         var order = style.GetPropertyValue("order");
         child.Order = (!string.IsNullOrWhiteSpace(order) && int.TryParse(order, out var o)) ? o : 0;
+        var gridArea = style.GetPropertyValue("grid-area");
+        if (!string.IsNullOrWhiteSpace(gridArea) && gridArea != "auto" && !gridArea.Contains('/'))
+            child.GridArea = gridArea.Trim();
+        var gcs = style.GetPropertyValue("grid-column-start");
+        if (!string.IsNullOrWhiteSpace(gcs) && int.TryParse(gcs, out var gcsVal))
+            child.GridColumnStart = gcsVal;
+        var gce = style.GetPropertyValue("grid-column-end");
+        if (!string.IsNullOrWhiteSpace(gce) && int.TryParse(gce, out var gceVal))
+            child.GridColumnEnd = gceVal;
+        var grs = style.GetPropertyValue("grid-row-start");
+        if (!string.IsNullOrWhiteSpace(grs) && int.TryParse(grs, out var grsVal))
+            child.GridRowStart = grsVal;
+        var gre = style.GetPropertyValue("grid-row-end");
+        if (!string.IsNullOrWhiteSpace(gre) && int.TryParse(gre, out var greVal))
+            child.GridRowEnd = greVal;
     }
 
     private void PositionGridChild(BlockBox child, BlockBox flex, float containerLeft, float containerRight, float containerTop)
     {
         int colCount = flex.GridColumnWidths.Count;
         bool hasRowHeights = flex.GridRowHeights.Count > 0;
-        int colStart = child.GridColumnStart > 0 ? child.GridColumnStart - 1 : _gridColumnIndex;
-        int rowStart = child.GridRowStart > 0 ? child.GridRowStart - 1 : _gridRowIndex;
+
+        // Resolve grid-area name from grid-template-areas
+        int areaColStart = 0, areaRowStart = 0, areaColEnd = 0, areaRowEnd = 0;
+        bool hasArea = false;
+        if (!string.IsNullOrWhiteSpace(child.GridArea) && !string.IsNullOrWhiteSpace(flex.GridTemplateAreas))
+        {
+            var areaMap = ParseGridTemplateAreas(flex.GridTemplateAreas);
+            if (areaMap.TryGetValue(child.GridArea, out var area))
+            {
+                areaColStart = area.colStart;
+                areaRowStart = area.rowStart;
+                areaColEnd = area.colEnd;
+                areaRowEnd = area.rowEnd;
+                hasArea = true;
+            }
+        }
+
+        int colStart, rowStart;
+        if (hasArea)
+        {
+            colStart = areaColStart;
+            rowStart = areaRowStart;
+        }
+        else
+        {
+            colStart = child.GridColumnStart > 0 ? child.GridColumnStart - 1 : _gridColumnIndex;
+            rowStart = child.GridRowStart > 0 ? child.GridRowStart - 1 : _gridRowIndex;
+        }
         if (hasRowHeights && rowStart > _gridRowIndex)
         {
             float rowOffset = 0;
@@ -802,7 +844,9 @@ public sealed class LayoutEngine
             _gridRowIndex++;
             _flexChildStartX = containerLeft;
         }
-        int colSpan = Math.Max(1, child.GridColumnEnd - child.GridColumnStart);
+        int colSpan = hasArea
+            ? Math.Max(1, areaColEnd - areaColStart)
+            : Math.Max(1, child.GridColumnEnd - child.GridColumnStart);
         float colWidth = 0;
         for (int c = _gridColumnIndex; c < _gridColumnIndex + colSpan && c < colCount; c++)
             colWidth += flex.GridColumnWidths[c];
@@ -905,7 +949,8 @@ public sealed class LayoutEngine
                             else if (availableSpace < 0 && totalShrink > 0)
                             {
                                 float shrinkAmount = Math.Abs(availableSpace) * child.FlexShrink / totalShrink;
-                                float minWidth = child.MinWidth > 0 ? child.MinWidth : 0;
+                                float minContentWidth = EstimateMinContentWidthMm(child.TextContent, child.ComputedStyle);
+                                float minWidth = new float[] { child.MinWidth, minContentWidth }.Max();
                                 if (isRow) child.Width = Math.Max(minWidth, baseSize - shrinkAmount);
                             }
 
@@ -1086,6 +1131,76 @@ public sealed class LayoutEngine
         return positions;
     }
 
+    /// <summary>
+    /// Parses CSS grid-template-areas into a map of area name -> (colStart, rowStart, colEnd, rowEnd).
+    /// Input format:  "header header" "sidebar main" "footer footer"
+    /// Returns empty dictionary if no valid areas found.
+    /// </summary>
+    internal static Dictionary<string, (int colStart, int rowStart, int colEnd, int rowEnd)> ParseGridTemplateAreas(string? value)
+    {
+        var areas = new Dictionary<string, (int colStart, int rowStart, int colEnd, int rowEnd)>();
+        if (string.IsNullOrWhiteSpace(value)) return areas;
+
+        // Parse quoted strings: "header header" "sidebar main" "footer footer"
+        var rows = new List<string[]>();
+        int i = 0;
+        while (i < value.Length)
+        {
+            if (value[i] == '"' || value[i] == '\'')
+            {
+                var quote = value[i];
+                i++;
+                var rowStr = "";
+                while (i < value.Length && value[i] != quote)
+                {
+                    rowStr += value[i];
+                    i++;
+                }
+                if (i < value.Length) i++; // skip closing quote
+                var cells = rowStr.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (cells.Length > 0)
+                    rows.Add(cells);
+            }
+            else
+            {
+                i++;
+            }
+        }
+
+        if (rows.Count == 0) return areas;
+
+        // Find extent of each named area
+        var areaExtents = new Dictionary<string, (int minCol, int maxCol, int minRow, int maxRow)>();
+        for (int r = 0; r < rows.Count; r++)
+        {
+            for (int c = 0; c < rows[r].Length; c++)
+            {
+                var name = rows[r][c];
+                if (name == "." || name == "..." || string.IsNullOrWhiteSpace(name)) continue;
+                if (areaExtents.TryGetValue(name, out var ext))
+                {
+                    areaExtents[name] = (
+                        Math.Min(ext.minCol, c),
+                        Math.Max(ext.maxCol, c),
+                        Math.Min(ext.minRow, r),
+                        Math.Max(ext.maxRow, r));
+                }
+                else
+                {
+                    areaExtents[name] = (c, c, r, r);
+                }
+            }
+        }
+
+        foreach (var kv in areaExtents)
+        {
+            var ext = kv.Value;
+            areas[kv.Key] = (ext.minCol, ext.minRow, ext.maxCol + 1, ext.maxRow + 1);
+        }
+
+        return areas;
+    }
+
     private static List<float> ParseGridTemplateColumns(string? template, float availableWidth, float gap)
     {
         var widths = new List<float>();
@@ -1258,6 +1373,22 @@ public sealed class LayoutEngine
             "larger" => 12f,
             _ => 10f
         };
+    }
+
+    /// <summary>
+    /// Estimates the min-content width (widest unbreakable word) for a text content.
+    /// Used as the shrink floor for flex-shrink (CSS Flexbox §9.2).
+    /// </summary>
+    private float EstimateMinContentWidthMm(string? text, CssDeclarationBlock? style)
+    {
+        if (string.IsNullOrEmpty(text)) return 0;
+        var words = text.Split(new[] { ' ', '\t', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length == 0) return 0;
+        float fontSizeMm = GetFontSize(style);
+        float maxWordWidth = 0;
+        foreach (var word in words)
+            maxWordWidth = Math.Max(maxWordWidth, EstimateTextWidthMm(word, style, fontSizeMm));
+        return maxWordWidth;
     }
 
     private float EstimateTextWidthMm(string? text, CssDeclarationBlock? style, float fontSizeMm)

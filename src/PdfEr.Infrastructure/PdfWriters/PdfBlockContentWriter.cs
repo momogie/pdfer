@@ -194,8 +194,16 @@ public partial class PdfWriter
                     sb.AppendLine($"{rectLeftPt:F2} {rectBottomPt:F2} {rectWidthPt:F2} {rectHeightPt:F2} re W n");
             }
 
-            // Background-image support (multiple backgrounds via comma)
+            // Gradient support (background-image with linear-gradient / radial-gradient)
             string? bgImageRaw = style?.GetPropertyValue("background-image");
+            bool hasGradient = bgImageRaw != null && (bgImageRaw.Contains("gradient", StringComparison.OrdinalIgnoreCase));
+
+            if (hasGradient)
+            {
+                DrawBackgroundGradient(sb, bgImageRaw!, rectLeftPt, rectBottomPt, rectWidthPt, rectHeightPt);
+            }
+
+            // Background-image support (multiple backgrounds via comma)
             if (!string.IsNullOrWhiteSpace(bgImageRaw) && bgImageRaw != "none")
             {
                 var bgImages = bgImageRaw.Split(',');
@@ -699,6 +707,256 @@ public partial class PdfWriter
         a = rgb.A / 255f;
         if (a == 0) return;
         r = rgb.R / 255f; g = rgb.G / 255f; b = rgb.B / 255f;
+    }
+
+    private void DrawBackgroundGradient(StringBuilder sb, string gradientCss,
+        float rectLeftPt, float rectBottomPt, float rectWidthPt, float rectHeightPt)
+    {
+        var grad = ParseGradient(gradientCss);
+        if (grad == null) return;
+
+        float[] coords;
+        int shadingType;
+
+        if (grad.IsRadial)
+        {
+            shadingType = 3; // Radial
+            float cx = rectLeftPt + rectWidthPt * grad.Cx;
+            float cy = rectBottomPt + rectHeightPt * grad.Cy;
+            float r0 = 0;
+            float r1 = Math.Max(rectWidthPt, rectHeightPt) * grad.Radius;
+            coords = [cx, cy, r0, cx, cy, r1];
+        }
+        else
+        {
+            shadingType = 2; // Axial
+            float angleRad = grad.Angle * MathF.PI / 180f;
+            float dx = MathF.Cos(angleRad) * MathF.Max(rectWidthPt, rectHeightPt);
+            float dy = MathF.Sin(angleRad) * MathF.Max(rectWidthPt, rectHeightPt);
+            float cx = rectLeftPt + rectWidthPt / 2f;
+            float cy = rectBottomPt + rectHeightPt / 2f;
+            coords = [cx - dx, cy - dy, cx + dx, cy + dy];
+        }
+
+        string patternName = $"Grad{_patternObjects.Count}";
+        var colors = grad.Stops.Select(s => (s.R / 255f, s.G / 255f, s.B / 255f)).ToArray();
+        var stops = grad.Stops.Select(s => s.Position).ToArray();
+
+        WriteShadingPattern(patternName, shadingType, coords, colors, stops);
+        sb.AppendLine("/Pattern cs");
+        sb.AppendLine($"/{patternName} scn");
+        sb.AppendLine($"{rectLeftPt:F2} {rectBottomPt:F2} {rectWidthPt:F2} {rectHeightPt:F2} re f");
+        sb.AppendLine("/DeviceRGB cs");
+    }
+
+    private sealed class GradientInfo
+    {
+        public bool IsRadial;
+        public float Angle;
+        public float Cx, Cy, Radius;
+        public List<(float Position, float R, float G, float B, float A)> Stops = new();
+    }
+
+    private static GradientInfo? ParseGradient(string css)
+    {
+        try
+        {
+            bool isRadial = css.Contains("radial-gradient", StringComparison.OrdinalIgnoreCase);
+            int start = css.IndexOf('(');
+            int end = css.LastIndexOf(')');
+            if (start < 0 || end < 0 || end <= start) return null;
+
+            var inner = css[(start + 1)..end].Trim();
+            var grad = new GradientInfo { IsRadial = isRadial };
+
+            // Split by top-level commas
+            var parts = SplitByCommas(inner);
+
+            int stopStart = 0;
+
+            if (!isRadial)
+            {
+                // First part might be angle or direction
+                if (parts.Count > 0)
+                {
+                    var first = parts[0].Trim();
+                    if (first.EndsWith("deg", StringComparison.OrdinalIgnoreCase)
+                        && float.TryParse(first[..^3], out var angle))
+                    {
+                        grad.Angle = angle;
+                        stopStart = 1;
+                    }
+                    else if (first.StartsWith("to ", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var dir = first[3..].Trim().ToLowerInvariant();
+                        grad.Angle = dir switch
+                        {
+                            "top" => 270f, "bottom" => 90f,
+                            "left" => 180f, "right" => 0f,
+                            "top right" or "right top" => 315f,
+                            "top left" or "left top" => 225f,
+                            "bottom right" or "right bottom" => 45f,
+                            "bottom left" or "left bottom" => 135f,
+                            _ => 270f
+                        };
+                        stopStart = 1;
+                    }
+                    else
+                    {
+                        grad.Angle = 270f; // Default: to bottom
+                    }
+                }
+            }
+            else
+            {
+                // Radial: skip shape/size/position for now, use default
+                grad.Cx = 0.5f;
+                grad.Cy = 0.5f;
+                grad.Radius = 0.7071f; // ~sqrt(0.5)
+                if (parts.Count > 0)
+                {
+                    var first = parts[0].Trim();
+                    if (first.Contains("at "))
+                    {
+                        // Skip the position info for now
+                        stopStart = 1;
+                    }
+                    else if (IsColorStop(first))
+                    {
+                        // No position info, use defaults
+                    }
+                    else
+                    {
+                        stopStart = 1; // Skip shape/size
+                    }
+                }
+            }
+
+            // Parse color stops
+            for (int i = stopStart; i < parts.Count; i++)
+            {
+                var stop = ParseColorStop(parts[i]);
+                if (stop.HasValue)
+                    grad.Stops.Add(stop.Value);
+            }
+
+            // Normalize positions if missing
+            if (grad.Stops.Count > 0)
+            {
+                int implicitCount = grad.Stops.Count(s => s.Position < 0);
+                if (implicitCount > 0)
+                {
+                    float step = 1f / (implicitCount + 1);
+                    float pos = step;
+                    for (int i = 0; i < grad.Stops.Count; i++)
+                    {
+                        if (grad.Stops[i].Position < 0)
+                        {
+                            var s = grad.Stops[i];
+                            grad.Stops[i] = (pos, s.R, s.G, s.B, s.A);
+                            pos += step;
+                        }
+                    }
+                }
+            }
+
+            return grad.Stops.Count >= 2 ? grad : null;
+        }
+        catch { return null; }
+    }
+
+    private static List<string> SplitByCommas(string text)
+    {
+        var parts = new List<string>();
+        int depth = 0;
+        int start = 0;
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (text[i] == '(') depth++;
+            else if (text[i] == ')') depth--;
+            else if (text[i] == ',' && depth == 0)
+            {
+                parts.Add(text[start..i]);
+                start = i + 1;
+            }
+        }
+        if (start < text.Length)
+            parts.Add(text[start..]);
+        return parts;
+    }
+
+    private static bool IsColorStop(string s)
+    {
+        s = s.Trim();
+        return s.StartsWith('#') || s.StartsWith("rgb", StringComparison.OrdinalIgnoreCase)
+            || s.StartsWith("hsl", StringComparison.OrdinalIgnoreCase)
+            || ColorNameToRgb(s.Split(' ', StringSplitOptions.RemoveEmptyEntries)[0], out _, out _, out _);
+    }
+
+    private static (float Position, float R, float G, float B, float A)? ParseColorStop(string s)
+    {
+        s = s.Trim();
+        if (string.IsNullOrWhiteSpace(s)) return null;
+
+        // Format: "color position" e.g. "red 50%", "#ff0 30px"
+        var spaceIdx = s.LastIndexOf(' ');
+        string colorStr = s;
+        string? posStr = null;
+
+        if (spaceIdx > 0)
+        {
+            var after = s[(spaceIdx + 1)..].Trim();
+            if (after.EndsWith('%') || after.EndsWith("px") || after.EndsWith("pt") || after.EndsWith("em"))
+            {
+                colorStr = s[..spaceIdx].Trim();
+                posStr = after;
+            }
+        }
+
+        // Parse color
+        var parser = new ColorParser();
+        if (!parser.TryParse(colorStr, out var docColor) || docColor is not RgbColor rgb)
+        {
+            // Try to look up named color
+            if (!ColorNameToRgb(colorStr, out var cr, out var cg, out var cb))
+                return null;
+            return (PosFromString(posStr), cr, cg, cb, 1f);
+        }
+
+        float pos = PosFromString(posStr);
+        return (pos, rgb.R, rgb.G, rgb.B, rgb.A / 255f);
+    }
+
+    private static float PosFromString(string? pos)
+    {
+        if (pos == null) return -1;
+        if (pos.EndsWith('%') && float.TryParse(pos[..^1], out var pct))
+            return Math.Clamp(pct / 100f, 0, 1);
+        return -1;
+    }
+
+    private static bool ColorNameToRgb(string name, out float r, out float g, out float b)
+    {
+        r = g = b = 0;
+        return name?.ToLowerInvariant() switch
+        {
+            "black" => SetRgb(out r, out g, out b, 0, 0, 0),
+            "white" => SetRgb(out r, out g, out b, 255, 255, 255),
+            "red" => SetRgb(out r, out g, out b, 255, 0, 0),
+            "green" => SetRgb(out r, out g, out b, 0, 128, 0),
+            "blue" => SetRgb(out r, out g, out b, 0, 0, 255),
+            "yellow" => SetRgb(out r, out g, out b, 255, 255, 0),
+            "orange" => SetRgb(out r, out g, out b, 255, 165, 0),
+            "purple" => SetRgb(out r, out g, out b, 128, 0, 128),
+            "gray" or "grey" => SetRgb(out r, out g, out b, 128, 128, 128),
+            "transparent" => false,
+            _ => false
+        };
+    }
+
+    private static bool SetRgb(out float r, out float g, out float b, int rr, int gg, int bb)
+    {
+        r = rr; g = gg; b = bb; return true;
     }
 
     private static float ParseShadowLength(string value)
