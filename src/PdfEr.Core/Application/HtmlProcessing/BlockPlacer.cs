@@ -101,6 +101,15 @@ public sealed class BlockPlacer
             // stacking each one as if it were its own block.
             geometry.Height = PlaceInlineContent(box, childContainingBlock, contentLeft, contentTop);
         }
+        else if (box.Kind == LayoutBoxKind.Table && TryFindTableRows(box, out var tableRows) && tableRows.Count > 0)
+        {
+            // Table Formatting Context (CSS 2.1 17.5, Phase 5:
+            // docs/plans/phase-05-tables.md). Falls back to plain block stacking
+            // above via the "tableRows.Count > 0" guard if the table has no rows
+            // at all (e.g. malformed markup) rather than risk a crash on an
+            // algorithm that assumes at least one row.
+            geometry.Height = PlaceTable(box, tableRows, childContainingBlock, contentLeft, contentTop);
+        }
         else
         {
             float? previousMarginBottom = null;
@@ -409,6 +418,88 @@ public sealed class BlockPlacer
 
         box.Children.Clear();
         box.Children.AddRange(newChildren);
+
+        return cursorY - contentTop;
+    }
+
+    /// <summary>
+    /// Finds every TableRow descendant of a Table box, looking through any
+    /// number of intermediate wrapper levels. BoxTreeBuilder does not special-case
+    /// thead/tbody/tfoot (their CSS display values -- table-header-group etc. --
+    /// fall through to LayoutBoxKind.Block, see BoxTreeBuilder.KindFromDisplay),
+    /// so a table's box tree looks like Table -> Block(tbody) -> TableRow -> TableCell,
+    /// not Table -> TableRow directly. This walks through that Block wrapper
+    /// (and any other non-row box) to collect rows in source order regardless
+    /// of how they're nested, without needing BoxTreeBuilder changes.
+    /// </summary>
+    private static bool TryFindTableRows(LayoutBox table, out List<LayoutBox> rows)
+    {
+        rows = new List<LayoutBox>();
+        CollectTableRows(table, rows);
+        return rows.Count > 0;
+    }
+
+    private static void CollectTableRows(LayoutBox box, List<LayoutBox> rows)
+    {
+        foreach (var child in box.Children)
+        {
+            if (child.Kind == LayoutBoxKind.TableRow)
+                rows.Add(child);
+            else
+                CollectTableRows(child, rows);
+        }
+    }
+
+    /// <summary>
+    /// Table Formatting Context placement (CSS 2.1 §17.5), slice 1: detects
+    /// table structure and stacks rows vertically with placeholder equal-width
+    /// columns. Real auto-table-layout (min/max-content-based column widths,
+    /// CSS 2.1 §17.5.2.2), border-collapse, and colspan/rowspan-aware grid
+    /// placement are later slices of Phase 5 (docs/plans/phase-05-tables.md) --
+    /// this slice only establishes the skeleton so later slices have somewhere
+    /// to plug in without BlockPlacer.Place's dispatch needing to change again.
+    /// </summary>
+    private float PlaceTable(LayoutBox table, List<LayoutBox> rows, ContainingBlock containingBlock, float contentLeft, float contentTop)
+    {
+        int columnCount = rows.Max(r => r.Children.Count(c => c.Kind == LayoutBoxKind.TableCell));
+        if (columnCount == 0) columnCount = 1;
+
+        var columnWidth = containingBlock.Width / columnCount;
+        var grid = new TableGrid();
+        for (int i = 0; i < columnCount; i++)
+            grid.ColumnWidths.Add(columnWidth);
+        table.Grid = grid;
+
+        float cursorY = contentTop;
+        foreach (var row in rows)
+        {
+            var cells = row.Children.Where(c => c.Kind == LayoutBoxKind.TableCell).ToList();
+            float cursorX = contentLeft;
+            float rowHeight = 0;
+
+            foreach (var cell in cells)
+            {
+                var cellContainingBlock = new ContainingBlock(columnWidth, containingBlock.Height, containingBlock.HeightIsDefinite);
+                Place(cell, cellContainingBlock, cursorX, cursorY);
+                rowHeight = Math.Max(rowHeight, cell.Geometry.Height);
+                cursorX += columnWidth;
+            }
+
+            // Second pass: a row's height is the max of its cells, so every
+            // cell must be stretched to that height once it's known (CSS 2.1
+            // 17.5.3: "the height of a row is the maximum of the row's cells'
+            // computed 'height'... and the minimum height (MIN) required by
+            // the cells' content").
+            foreach (var cell in cells)
+            {
+                var g = cell.Geometry;
+                g.Height = rowHeight;
+                cell.Geometry = g;
+            }
+
+            row.Geometry = new BoxGeometry { X = contentLeft, Y = cursorY, Width = containingBlock.Width, Height = rowHeight };
+            cursorY += rowHeight;
+        }
 
         return cursorY - contentTop;
     }
