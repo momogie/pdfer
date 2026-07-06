@@ -402,23 +402,8 @@ public sealed class BlockPlacer
         geometry.MarginRight = ParseLengthMm(style.GetPropertyValue("margin-right"));
     }
 
-    // Same unit table as IntrinsicSizeCalculator.ParseLengthMm / LayoutEngine.ParseLength
-    // (mm-native layout units, see memory [[pdfer-layout-units]]).
-    private static float ParseLengthMm(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return 0;
-        value = value.Trim().ToLowerInvariant();
-        if (value is "0" or "0px" or "0pt" or "0mm" or "auto" or "none") return 0;
-        if (value is "thin") return 0.5f;
-        if (value is "medium") return 1f;
-        if (value is "thick") return 2f;
-
-        if (value.EndsWith("mm")) return float.TryParse(value[..^2], out var v) ? v : 0;
-        if (value.EndsWith("pt")) return float.TryParse(value[..^2], out var v) ? v * 0.3528f : 0;
-        if (value.EndsWith("px")) return float.TryParse(value[..^2], out var v) ? v * 0.2646f : 0;
-        if (value.EndsWith("cm")) return float.TryParse(value[..^2], out var v) ? v * 10f : 0;
-        if (value.EndsWith("in")) return float.TryParse(value[..^2], out var v) ? v * 25.4f : 0;
-        if (float.TryParse(value, out var num)) return num;
-        return 0;
-    }
+    // Delegates to CssLengthParser (single shared implementation — see that
+    // file's remarks for why this and two other identical copies were
+    // consolidated). Kept as a thin wrapper so call sites in this file don't change.
+    private static float ParseLengthMm(string? value) => CssLengthParser.ParseLengthMm(value);
 }

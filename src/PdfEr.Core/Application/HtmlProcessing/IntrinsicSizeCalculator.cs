@@ -127,7 +127,7 @@ public sealed class IntrinsicSizeCalculator
         float ParseMm(string? propertyName)
         {
             var value = style.GetPropertyValue(propertyName ?? "");
-            return ParseLengthMm(value);
+            return CssLengthParser.ParseLengthMm(value);
         }
 
         var paddingLeft = ParseMm("padding-left");
@@ -138,27 +138,6 @@ public sealed class IntrinsicSizeCalculator
         var marginRight = ParseMm("margin-right");
 
         return (paddingLeft + paddingRight + borderLeft + borderRight, marginLeft + marginRight);
-    }
-
-    // Mirrors LayoutEngine.ParseLength's unit table (mm-native layout units,
-    // see memory [[pdfer-layout-units]]) so Pass 1 agrees with the streaming
-    // pipeline on physical sizes while both coexist.
-    private static float ParseLengthMm(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return 0;
-        value = value.Trim().ToLowerInvariant();
-        if (value is "0" or "0px" or "0pt" or "0mm" or "auto" or "none") return 0;
-        if (value is "thin") return 0.5f;
-        if (value is "medium") return 1f;
-        if (value is "thick") return 2f;
-
-        if (value.EndsWith("mm")) return float.TryParse(value[..^2], out var v) ? v : 0;
-        if (value.EndsWith("pt")) return float.TryParse(value[..^2], out var v) ? v * 0.3528f : 0;
-        if (value.EndsWith("px")) return float.TryParse(value[..^2], out var v) ? v * 0.2646f : 0;
-        if (value.EndsWith("cm")) return float.TryParse(value[..^2], out var v) ? v * 10f : 0;
-        if (value.EndsWith("in")) return float.TryParse(value[..^2], out var v) ? v * 25.4f : 0;
-        if (float.TryParse(value, out var num)) return num;
-        return 0;
     }
 
     private static float GetAdvanceWidth(FontMetrics metrics, char c) =>

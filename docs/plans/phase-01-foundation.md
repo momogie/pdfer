@@ -140,14 +140,27 @@ Konsep first-class yang diperkenalkan (mengganti kursor global):
       belum dispatch ke `ITagHandler`, jadi list/tabel/flex/grid/gambar/link **tidak**
       direproduksi lewat jalur ini — angka SSIM tinggi di atas hanya berlaku untuk
       dokumen sesederhana yang diuji, bukan klaim fidelity menyeluruh.
-- [ ] Satukan konversi unit di `IUnitConverter`; `ParseLength`/`ParseCssLength` lokal di
-      [LayoutEngine.cs:509-546](../../src/PdfEr.Core/Application/HtmlProcessing/LayoutEngine.cs#L509-L546)
-      masih tersebar seperti semula. `ComputedStyle.ResolveFontSizePt` sengaja
-      **menduplikasi** (bukan memanggil) `LayoutEngine.GetFontSizePt` untuk menghindari
-      coupling dua arah antar proyek Domain/Application saat ini — perlu disatukan saat
-      `IUnitConverter` dibereskan.
+- [~] **Satukan parsing panjang CSS** — `CssLengthParser` (baru) di
+      [CssLengthParser.cs](../../src/PdfEr.Core/Application/HtmlProcessing/CssLengthParser.cs)
+      jadi satu sumber kebenaran untuk `ParseLengthMm`/`ParseCssLengthMm`, menggantikan
+      3 salinan identik (`LayoutEngine.ParseLength`/`ParseCssLength`,
+      `IntrinsicSizeCalculator.ParseLengthMm`, `BlockPlacer.ParseLengthMm`) yang tadinya
+      dijaga tetap sama hanya lewat konvensi/komentar, tanpa jaminan struktural.
+      Ketiganya sekarang jadi wrapper tipis yang delegasi ke `CssLengthParser`, dengan
+      **konstanta persis sama** (`0.3528f`, dst.) — diverifikasi lewat harness fidelity
+      (streaming **dan** box-tree) skornya identik sebelum/sesudah, plus
+      `LayoutEngineStaticTests.ApplyBoxModel_*` (yang assert angka pasti dari
+      `ParseLength`) tetap lolos. **Catatan jujur**: ini **bukan** "satukan ke
+      `IUnitConverter`" seperti rencana awal — `IUnitConverter` mengonversi
+      `UnitOfMeasure` enum yang sudah tertype, bukan string CSS mentah, dan field
+      `_unitConverter` di `LayoutEngine` ternyata memang **tidak pernah dipanggil**
+      sama sekali (dead field, ditemukan saat audit ini). Menyatukan ke `IUnitConverter`
+      sungguhan berarti mengubah kontrak DI yang lebih luas — di luar cakupan slice
+      konsolidasi murni ini. `ComputedStyle.ResolveFontSizePt` masih menduplikasi
+      (bukan memanggil) `LayoutEngine.GetFontSizePt` — font-size punya tabel keyword
+      (`xx-small`, dst.) yang beda bentuk dari length parsing, belum digabung.
 
-## Progres nyata (9 sesi — bukan Fase 1 selesai, lihat status per item di atas)
+## Progres nyata (10 sesi — bukan Fase 1 selesai, lihat status per item di atas)
 
 **Sesi 1**: tipe data box-tree tambahan (`LayoutBox`, `ComputedStyle`, dll.), tanpa
 mengubah pipeline streaming. Ditemukan & diperbaiki bug race-condition di `CssMerger`
@@ -269,13 +282,38 @@ harness eksploratif box-tree ditambah 1 kasus paragraf sengaja lebar untuk memak
 wrap — **SSIM 0.9998** vs Chromium, bukti empiris titik wrap benar-benar cocok
 secara visual, bukan cuma lolos unit test angka. Build solution penuh tanpa error.
 
+**Sesi 10**: konsolidasi parsing panjang CSS. Ditemukan saat audit "apa lagi yang
+tersisa di Fase 1": 3 salinan identik `ParseLength`/`ParseLengthMm` (LayoutEngine,
+IntrinsicSizeCalculator, BlockPlacer) yang cuma dijaga sama lewat komentar/konvensi,
+plus field `_unitConverter` di `LayoutEngine` yang ternyata **tidak pernah dipanggil**
+(dead code). Diekstrak jadi `CssLengthParser` (tipe statis baru), ketiga tempat lama
+jadi wrapper tipis yang delegasi ke situ — nilai konstanta persis sama, tidak ada
+perubahan perilaku numerik. Ini menyentuh `LayoutEngine` (pipeline streaming yang
+hidup), jadi diverifikasi lebih ketat dari biasanya:
+- 20 test baru `CssLengthParserTests` (semua unit CSS: mm/pt/px/cm/in/rem/em, keyword
+  `thin`/`medium`/`thick`, `%`, `auto`/`none`, angka tanpa unit).
+- 247/247 `PdfEr.Core.Tests` stabil 3x run (termasuk `LayoutEngineStaticTests.ApplyBoxModel_*`
+  yang assert angka pasti dari `ParseLength` — bukti tidak ada regresi numerik).
+- 54 Infrastructure + 54 Integration tetap hijau.
+- Harness fidelity utama Fase 0 (streaming) **dan** harness eksploratif box-tree
+  (5 kasus) skornya **identik byte-untuk-byte** sebelum/sesudah — bukti paling kuat
+  bahwa konsolidasi ini benar-benar tidak mengubah output apa pun.
+
+**Catatan jujur**: ini bukan "satukan ke `IUnitConverter`" seperti niat awal rencana —
+`IUnitConverter` API-nya beda bentuk (enum `UnitOfMeasure` bertipe, bukan string CSS
+mentah) dan menyatukannya sungguhan berarti mengubah kontrak DI yang lebih luas,
+di luar cakupan slice ini. Yang diselesaikan adalah masalah duplikasi yang nyata
+dan berisiko (3 salinan bisa diam-diam divergen), bukan penyatuan arsitektur unit
+secara menyeluruh.
+
 **Belum dikerjakan (sengaja, untuk sesi terpisah)**: margin collapsing parent/first-child,
 parent/last-child, dan empty-block self-collapsing; UAX#14 line-breaking penuh (masih
 whitespace split, salah untuk CJK/hyphenation — Fase 3); bidi/RTL; layout
-tabel/flex/grid/float/positioning sungguhan (lihat di atas). Fase 1 sekarang mencakup
-pondasi + subset tag umum + word-wrap dasar untuk teks Latin — cakupan fitur yang
-tersisa (tabel, flex/grid, dst.) masing-masing sudah punya fase sendiri di roadmap
-(5, 6, 7), bukan lagi bagian "pondasi" Fase 1.
+tabel/flex/grid/float/positioning sungguhan; penyatuan `IUnitConverter` sungguhan (di
+luar cakupan konsolidasi murni Sesi 10, lihat catatan di atas). Fase 1 sekarang
+mencakup pondasi + subset tag umum + word-wrap dasar untuk teks Latin + parsing unit
+yang sudah disatukan — cakupan fitur yang tersisa (tabel, flex/grid, dst.) masing-masing
+sudah punya fase sendiri di roadmap (5, 6, 7), bukan lagi bagian "pondasi" Fase 1.
 
 ## Migrasi tag handler
 

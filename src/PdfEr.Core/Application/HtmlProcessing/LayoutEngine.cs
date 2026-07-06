@@ -506,44 +506,13 @@ public sealed class LayoutEngine
         box.BorderRight = ParseLength(styles.GetPropertyValue("border-right-width"));
     }
 
-    private static float ParseLength(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return 0;
-        value = value.Trim().ToLowerInvariant();
-        if (value == "0" || value == "0px" || value == "0pt" || value == "0mm") return 0;
+    // Delegates to CssLengthParser (single shared implementation — see that
+    // file's remarks for why the three previously-duplicated copies were
+    // consolidated). Kept as thin wrappers so call sites in this file don't change.
+    private static float ParseLength(string? value) => CssLengthParser.ParseLengthMm(value);
 
-        if (value is "thin") return 0.5f;
-        if (value is "medium") return 1f;
-        if (value is "thick") return 2f;
-
-        if (value.EndsWith("mm")) return float.TryParse(value[..^2], out var v) ? v : 0;
-        if (value.EndsWith("pt")) return float.TryParse(value[..^2], out var v) ? v * 0.3528f : 0;
-        if (value.EndsWith("px")) return float.TryParse(value[..^2], out var v) ? v * 0.2646f : 0;
-        if (value.EndsWith("cm")) return float.TryParse(value[..^2], out var v) ? v * 10f : 0;
-        if (value.EndsWith("in")) return float.TryParse(value[..^2], out var v) ? v * 25.4f : 0;
-        if (value.EndsWith("rem")) return float.TryParse(value[..^3], out var v) ? v * 10f * 0.3528f : 0;
-        if (value.EndsWith("em")) return float.TryParse(value[..^2], out var v) ? v * 10f * 0.3528f : 0;
-
-        if (float.TryParse(value, out var num)) return num;
-
-        return 0;
-    }
-
-    private static float ParseCssLength(string? value, float parentDimension)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return 0;
-        value = value.Trim().ToLowerInvariant();
-        if (value == "auto") return 0;
-
-        if (value.EndsWith("%"))
-        {
-            if (float.TryParse(value[..^1].Trim(), out var pct))
-                return parentDimension * pct / 100f;
-            return 0;
-        }
-
-        return ParseLength(value);
-    }
+    private static float ParseCssLength(string? value, float parentDimension) =>
+        CssLengthParser.ParseCssLengthMm(value, parentDimension);
 
     public void PositionFlexChild(BlockBox child)
     {
