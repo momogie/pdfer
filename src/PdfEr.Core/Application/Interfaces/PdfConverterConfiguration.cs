@@ -34,5 +34,14 @@ public sealed class PdfConverterConfiguration
 
     public string? Title { get; set; }
 
+    /// <summary>
+    /// Opt-in switch to the box-tree + multi-pass layout pipeline (see
+    /// docs/plans/phase-01-foundation.md). Defaults to false: the existing
+    /// single-pass streaming LayoutEngine remains the default until box-tree
+    /// layout reaches SSIM parity across the fidelity test corpus
+    /// (tests/PdfEr.FidelityTests). Do not flip the default before that gate passes.
+    /// </summary>
+    public bool UseBoxTreeLayout { get; set; }
+
     public DocumentMargins GetMargins() => new(MarginTop, MarginBottom, MarginLeft, MarginRight, MarginHeader, MarginFooter);
 }

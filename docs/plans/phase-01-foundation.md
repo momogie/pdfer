@@ -31,23 +31,63 @@ Konsep first-class yang diperkenalkan (mengganti kursor global):
 
 ## Checklist
 
-- [ ] Tipe `LayoutBox` baru (block box tree) + `LineBox`/`InlineLevelBox` untuk IFC,
-      terpisah dari `BlockBox`/`InlineBox` domain lama ([LayoutTypes.cs](../../src/PdfEr.Core/Domain/Layout/LayoutTypes.cs)).
+- [x] Tipe `LayoutBox` baru (block box tree) di
+      [BoxTree.cs](../../src/PdfEr.Core/Domain/Layout/BoxTree.cs), terpisah dari
+      `BlockBox`/`InlineBox` domain lama ([LayoutTypes.cs](../../src/PdfEr.Core/Domain/Layout/LayoutTypes.cs)
+      tidak disentuh). **Belum ada** `LineBox`/`InlineLevelBox` khusus untuk IFC — baru
+      `LayoutBoxKind.Inline` sebagai penanda, belum ada struktur baris sungguhan.
 - [ ] **Box generation**: walk DOM → box tree, sisipkan **anonymous box** saat block & inline
-      bercampur (aturan CSS box generation).
-- [ ] Pisahkan **ComputedStyle** sebagai tahap sendiri (nilai sudah diresolusi), pisah dari
-      `CreateBlock` yang sekarang menggabung resolve+layout ([LayoutEngine.cs:145-191](../../src/PdfEr.Core/Application/HtmlProcessing/LayoutEngine.cs#L145-L191)).
-- [ ] **Pass 1 — intrinsic sizing**: hitung `min-content`/`max-content` width bottom-up
-      (dibutuhkan shrink-to-fit, tabel, flex-basis). Ganti tebakan `textLen * fontSize * 0.5f`.
-- [ ] **Pass 2 — placement**: tempatkan anak dalam containing block; tinggi dihitung dari isi,
-      bukan `fontSize * 1.3f` ([LayoutEngine.cs:366-367](../../src/PdfEr.Core/Application/HtmlProcessing/LayoutEngine.cs#L366-L367)).
-- [ ] Objek **ContainingBlock** & **BlockFormattingContext/InlineFormattingContext**.
-- [ ] Adapter **paint**: box tree → `BlockBox`/`InlineBox` lama supaya PDF writer belum berubah
-      (kurangi blast radius; writer dirombak di Fase 4).
-- [ ] **Feature flag** `UseBoxTreeLayout`; pipeline lama tetap ada sampai paritas tercapai.
-- [ ] Satukan konversi unit di `IUnitConverter` (lihat Fase 8); hentikan `ParseLength` lokal
-      yang tersebar ([LayoutEngine.cs:509-546](../../src/PdfEr.Core/Application/HtmlProcessing/LayoutEngine.cs#L509-L546)).
-      Pertahankan aturan unit: layout **mm**, `.Tf` **pt** (memory [[pdfer-layout-units]]).
+      bercampur. Belum dikerjakan — `LayoutBox`/`ComputedStyle` baru ada sebagai tipe data,
+      belum ada kode yang membangun pohon dari DOM.
+- [x] **ComputedStyle** sebagai tipe terpisah di
+      [ComputedStyle.cs](../../src/PdfEr.Core/Domain/Styles/ComputedStyle.cs) — membungkus
+      `CssDeclarationBlock` hasil cascade + pre-resolve font-size (pt & mm, cocok dengan
+      `LayoutEngine.GetFontSizePt`), `display`, `position`, `float`. **Catatan jujur**: ini
+      *belum* memisahkan `CreateBlock`'s resolve+layout tergabung di
+      [LayoutEngine.cs:145-191](../../src/PdfEr.Core/Application/HtmlProcessing/LayoutEngine.cs#L145-L191) —
+      `ComputedStyle` ada sebagai tipe siap pakai, tapi belum dipanggil dari pipeline manapun.
+      Juga belum meng-cover semua properti (width/height/margin/padding % masih perlu
+      containing block, sengaja belum diresolusi di sini).
+- [ ] **Pass 1 — intrinsic sizing**: tipe `IntrinsicSizes` sudah ada di `BoxTree.cs`, tapi
+      **belum ada kode yang menghitungnya**. Tebakan `textLen * fontSize * 0.5f` di
+      LayoutEngine masih dipakai apa adanya.
+- [ ] **Pass 2 — placement**: tipe `BoxGeometry` sudah ada, **belum ada placement pass**.
+      `fontSize * 1.3f` di [LayoutEngine.cs:366-367](../../src/PdfEr.Core/Application/HtmlProcessing/LayoutEngine.cs#L366-L367)
+      masih jalan seperti sebelumnya.
+- [x] Objek **ContainingBlock** (struct, `Width`/`Height`/`HeightIsDefinite`) dan enum
+      **FormattingContextKind** (Block/Inline/Flex/Grid/Table) sebagai penanda — keduanya
+      tipe data saja, **belum dipakai** untuk resolusi `%` atau pemisahan BFC/IFC nyata.
+- [ ] Adapter **paint**: box tree → `BlockBox`/`InlineBox` lama. Belum dikerjakan — tidak
+      relevan sampai ada Pass 1/2 yang menghasilkan geometri box tree untuk diadaptasi.
+- [x] **Feature flag** `UseBoxTreeLayout` ditambahkan di `PdfConverterConfiguration`
+      (default `false`). **Belum ada percabangan** yang membacanya di `PdfConverterService`
+      atau `LayoutEngine` — flag ada tapi belum "hidup".
+- [ ] Satukan konversi unit di `IUnitConverter`; `ParseLength`/`ParseCssLength` lokal di
+      [LayoutEngine.cs:509-546](../../src/PdfEr.Core/Application/HtmlProcessing/LayoutEngine.cs#L509-L546)
+      masih tersebar seperti semula. `ComputedStyle.ResolveFontSizePt` sengaja
+      **menduplikasi** (bukan memanggil) `LayoutEngine.GetFontSizePt` untuk menghindari
+      coupling dua arah antar proyek Domain/Application saat ini — perlu disatukan saat
+      `IUnitConverter` dibereskan.
+
+## Progres nyata sesi ini (bukan Fase 1 selesai — lihat status per item di atas)
+
+Slice pertama yang dikerjakan: **tipe data box-tree murni tambahan**, tanpa mengubah satu
+baris pun di pipeline streaming yang berjalan (`LayoutEngine`, `PdfConverterService`,
+tag handler). Tidak ada regresi mungkin karena kode lama tidak disentuh — dikonfirmasi
+lewat build solution penuh + 169/169 test `PdfEr.Core.Tests` (termasuk 19 test baru untuk
+`ComputedStyle`/`LayoutBox`) lolos stabil 3x berturut-turut, plus 54 test Infrastructure
+dan 46 test Integration tetap hijau.
+
+Sebagai bagian dari verifikasi baseline sebelum menyentuh area ini, ditemukan dan diperbaiki
+bug race-condition nyata (tidak terkait box-tree) di `CssMerger`: `CssParser.Parse()` meng-
+cache `CssRule`/`CssDeclarationBlock` secara statis lintas proses, dan dua kode caller
+memutasi objek yang sama itu di tempat — race di bawah eksekusi test paralel xUnit. Lihat
+commit terpisah untuk detail; disebut di sini karena ditemukan selagi meng-audit `CssMerger`
+untuk memahami alur `ResolveStyles` yang akan dipanggil `ComputedStyle.Resolve` nantinya.
+
+**Belum dikerjakan (sengaja, untuk sesi terpisah)**: box generation dari DOM, Pass 1/2
+sungguhan, migrasi tag handler, adapter paint. Fase 1 tetap XL; slice ini hanya fondasi
+tipe data yang aman untuk dibangun di atasnya tanpa risiko regresi.
 
 ## Migrasi tag handler
 
