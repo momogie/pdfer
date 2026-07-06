@@ -53,6 +53,14 @@ public class BoxTreePipelineFidelityTests : IAsyncLifetime
         This div uses box-sizing:border-box, so its declared width already
         includes the padding and border.</div></body></html>
         """)]
+    [InlineData("""
+        <html><body>
+        <div style="width:10mm;min-width:70mm;border:1px solid black">This div's
+        declared width is overridden by a wider min-width.</div>
+        <div style="max-width:50mm;border:1px solid black">This div would fill
+        the page but is capped by max-width.</div>
+        </body></html>
+        """)]
     public async Task BoxTreePipeline_SimpleDocument_ProducesComparableOutput(string html)
     {
         var pdfChromium = await _helper!.RenderHtmlViaChromiumAsync(html);

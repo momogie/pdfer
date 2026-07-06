@@ -57,6 +57,8 @@ public sealed class BlockPlacer
         ApplyBoxModel(ref geometry, box.Style);
 
         geometry.Width = ResolveWidth(box, containingBlock, geometry);
+        geometry.Width = ClampToMinMax(geometry.Width, box.Style, containingBlock.Width,
+            "min-width", "max-width", geometry, isWidth: true);
 
         var contentWidth = geometry.Width - geometry.PaddingLeft - geometry.PaddingRight
             - geometry.BorderLeft - geometry.BorderRight;
@@ -142,7 +144,47 @@ public sealed class BlockPlacer
             geometry.Height = IsBorderBox(box.Style) ? explicitHeight.Value : explicitHeight.Value + paddingBorderHeight;
         }
 
+        geometry.Height = ClampToMinMax(geometry.Height, box.Style, containingBlock.Height,
+            "min-height", "max-height", geometry, isWidth: false);
+
         box.Geometry = geometry;
+    }
+
+    /// <summary>
+    /// Clamps a resolved border-box dimension to CSS min-*/max-* (CSS2.1 10.4/10.7).
+    /// min-width/min-height/max-width/max-height are specified against the
+    /// content box by default (same box-sizing rule as width/height itself), so
+    /// padding+border is added on top before clamping unless box-sizing:border-box
+    /// is set. max-* of "none" (or an unresolvable percentage against an
+    /// indefinite containing block) is not applied, matching ResolveExplicitLength.
+    /// </summary>
+    private static float ClampToMinMax(float borderBoxValue, ComputedStyle style, float containingBlockDimension,
+        string minProperty, string maxProperty, BoxGeometry geometry, bool isWidth)
+    {
+        var paddingBorder = isWidth
+            ? geometry.PaddingLeft + geometry.PaddingRight + geometry.BorderLeft + geometry.BorderRight
+            : geometry.PaddingTop + geometry.PaddingBottom + geometry.BorderTop + geometry.BorderBottom;
+        var borderBox = IsBorderBox(style);
+
+        var min = ResolveExplicitLength(style.GetPropertyValue(minProperty), containingBlockDimension, true);
+        if (min.HasValue)
+        {
+            var minBorderBox = borderBox ? min.Value : min.Value + paddingBorder;
+            if (borderBoxValue < minBorderBox) borderBoxValue = minBorderBox;
+        }
+
+        var maxRaw = style.GetPropertyValue(maxProperty)?.Trim().ToLowerInvariant();
+        if (maxRaw != "none")
+        {
+            var max = ResolveExplicitLength(maxRaw, containingBlockDimension, true);
+            if (max.HasValue)
+            {
+                var maxBorderBox = borderBox ? max.Value : max.Value + paddingBorder;
+                if (borderBoxValue > maxBorderBox) borderBoxValue = maxBorderBox;
+            }
+        }
+
+        return borderBoxValue;
     }
 
     private static bool IsInlineLevel(LayoutBox box) =>

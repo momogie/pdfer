@@ -37,7 +37,15 @@ tak ada line box sungguhan.
 - [x] **Height `auto`** dari isi; **`height: %`** — **sudah selesai di Fase 1**
       (`BlockPlacer.ResolveExplicitLength`, hanya diresolusi kalau containing block
       `HeightIsDefinite`, sesuai CSS 2.1 §10.5).
-- [ ] **`min/max-width/height`** — belum diterapkan di `BlockPlacer` sama sekali.
+- [x] **`min/max-width/height`** — `ClampToMinMax` di `BlockPlacer` menerapkan clamp
+      setelah resolusi width (sebelum containing block anak dihitung, supaya anak
+      melihat lebar konten yang sudah benar) dan setelah resolusi height (di akhir,
+      karena height dari isi baru diketahui setelah children ditempatkan). Hormati
+      `box-sizing` yang sama dengan `width`/`height` (min/max default content-box,
+      ditambah padding+border kecuali `border-box`), dukung `%`, dan `max-width:none`
+      tidak diterapkan. Diverifikasi 9 unit test + harness fidelity
+      (`min-width` mengalahkan `width` sempit, `max-width` membatasi fill-parent →
+      **SSIM 0.9999** vs Chromium).
 - [ ] **Margin auto** untuk centering horizontal (`margin: 0 auto`) — belum dikerjakan.
 
 ## Checklist — Inline formatting (IFC)
@@ -80,7 +88,7 @@ tak ada line box sungguhan.
 - Paragraf multi-baris membungkus di titik yang sama dengan Chrome (untuk font yang sama).
   ✅ diverifikasi (SSIM 0.9998 pada kasus wrap paksa).
 
-## Progres nyata (1 sesi)
+## Progres nyata (2 sesi)
 
 **Sesi 1**: `box-sizing` (content-box/border-box) dan `text-align` (left/right/center/
 justify) ditambahkan ke `BlockPlacer`. Keduanya diverifikasi dobel: unit test dengan
@@ -89,7 +97,20 @@ nilai tepat dihitung tangan, **dan** harness fidelity langsung ke Chromium
 Infrastructure + 54 Integration tetap hijau, harness fidelity utama Fase 0 (streaming)
 **identik** (`LayoutEngine` tidak disentuh). Build solution penuh tanpa error.
 
-**Belum dikerjakan**: min/max-width/height, margin auto centering, vertical-align,
-line-height eksplisit dari CSS, inline-block sebagai atomic inline item sungguhan,
-white-space, text-indent, text-transform/text-decoration, overflow. Fase 2 sudah
-mulai, jauh dari selesai.
+**Sesi 2**: `min/max-width/height` ditambahkan lewat `ClampToMinMax`, dipanggil di dua
+titik (setelah resolusi width — sebelum containing block anak dihitung; setelah
+resolusi height — di akhir, karena height dari isi baru diketahui setelah anak
+ditempatkan). Menghormati `box-sizing` yang sama seperti `width`/`height` sendiri.
+9 test baru (`min-width` mengalahkan width sempit, tidak menyempitkan width lebar,
+`max-width` membatasi fill-parent, `max-width:none` tidak diterapkan, `min-height`
+memperluas konten pendek, `max-height` membatasi height eksplisit, kombinasi dengan
+border-box, kombinasi dengan content-box, resolusi `%`) — 265/265 `PdfEr.Core.Tests`
+stabil 3x run, 54 Infrastructure + 54 Integration tetap hijau, harness fidelity
+utama Fase 0 (streaming) **identik**, harness eksploratif box-tree (kasus
+min-width/max-width kombinasi) → **SSIM 0.9999** vs Chromium. Build solution penuh
+tanpa error.
+
+**Belum dikerjakan**: margin auto centering, vertical-align, line-height eksplisit
+dari CSS, inline-block sebagai atomic inline item sungguhan, white-space, text-indent,
+text-transform/text-decoration, overflow, margin collapsing parent/child. Fase 2
+berlanjut, jauh dari selesai.

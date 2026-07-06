@@ -255,6 +255,137 @@ public class BlockPlacerTests
     }
 
     [Fact]
+    public void Place_MinWidth_ExpandsNarrowerExplicitWidth()
+    {
+        var decl = new CssDeclarationBlock();
+        decl.SetProperty("width", "20mm");
+        decl.SetProperty("min-width", "50mm");
+        var box = Block(decl);
+
+        var placer = new BlockPlacer();
+        placer.Place(box, new ContainingBlock(180, 0, false), 0, 0);
+
+        Assert.Equal(50, box.Geometry.Width);
+    }
+
+    [Fact]
+    public void Place_MinWidth_DoesNotShrinkWiderExplicitWidth()
+    {
+        var decl = new CssDeclarationBlock();
+        decl.SetProperty("width", "80mm");
+        decl.SetProperty("min-width", "50mm");
+        var box = Block(decl);
+
+        var placer = new BlockPlacer();
+        placer.Place(box, new ContainingBlock(180, 0, false), 0, 0);
+
+        Assert.Equal(80, box.Geometry.Width);
+    }
+
+    [Fact]
+    public void Place_MaxWidth_ShrinksWiderContainingBlockFill()
+    {
+        var decl = new CssDeclarationBlock();
+        decl.SetProperty("max-width", "60mm");
+        var box = Block(decl);
+
+        var placer = new BlockPlacer();
+        placer.Place(box, new ContainingBlock(180, 0, false), 0, 0);
+
+        Assert.Equal(60, box.Geometry.Width);
+    }
+
+    [Fact]
+    public void Place_MaxWidthNone_DoesNotClamp()
+    {
+        var decl = new CssDeclarationBlock();
+        decl.SetProperty("max-width", "none");
+        var box = Block(decl);
+
+        var placer = new BlockPlacer();
+        placer.Place(box, new ContainingBlock(180, 0, false), 0, 0);
+
+        Assert.Equal(180, box.Geometry.Width);
+    }
+
+    [Fact]
+    public void Place_MinHeight_ExpandsShorterContentHeight()
+    {
+        var decl = new CssDeclarationBlock();
+        decl.SetProperty("min-height", "50mm");
+        var box = Block(decl); // no children, content height would be 0
+
+        var placer = new BlockPlacer();
+        placer.Place(box, new ContainingBlock(100, 0, false), 0, 0);
+
+        Assert.Equal(50, box.Geometry.Height);
+    }
+
+    [Fact]
+    public void Place_MaxHeight_ShrinksTallerExplicitHeight()
+    {
+        var decl = new CssDeclarationBlock();
+        decl.SetProperty("height", "80mm");
+        decl.SetProperty("max-height", "30mm");
+        var box = Block(decl);
+
+        var placer = new BlockPlacer();
+        placer.Place(box, new ContainingBlock(100, 0, false), 0, 0);
+
+        Assert.Equal(30, box.Geometry.Height);
+    }
+
+    [Fact]
+    public void Place_MinMaxWidth_WithBorderBoxSizing_ClampsAgainstBorderBoxDirectly()
+    {
+        var decl = new CssDeclarationBlock();
+        decl.SetProperty("width", "10mm");
+        decl.SetProperty("min-width", "40mm");
+        decl.SetProperty("padding-left", "5mm");
+        decl.SetProperty("padding-right", "5mm");
+        decl.SetProperty("box-sizing", "border-box");
+        var box = Block(decl);
+
+        var placer = new BlockPlacer();
+        placer.Place(box, new ContainingBlock(180, 0, false), 0, 0);
+
+        // border-box:min-width 40mm applies directly to the border-box width,
+        // not content+padding, so the result is exactly 40mm.
+        Assert.Equal(40, box.Geometry.Width);
+    }
+
+    [Fact]
+    public void Place_MinWidth_DefaultBoxSizing_AddsPaddingOnTopBeforeClamping()
+    {
+        var decl = new CssDeclarationBlock();
+        decl.SetProperty("width", "10mm");
+        decl.SetProperty("min-width", "40mm");
+        decl.SetProperty("padding-left", "5mm");
+        decl.SetProperty("padding-right", "5mm");
+        var box = Block(decl);
+
+        var placer = new BlockPlacer();
+        placer.Place(box, new ContainingBlock(180, 0, false), 0, 0);
+
+        // content-box: min-width 40mm means 40mm of CONTENT, so border-box = 40 + 5 + 5 = 50mm.
+        Assert.Equal(50, box.Geometry.Width);
+    }
+
+    [Fact]
+    public void Place_MinWidthAsPercent_ResolvesAgainstContainingBlock()
+    {
+        var decl = new CssDeclarationBlock();
+        decl.SetProperty("width", "10mm");
+        decl.SetProperty("min-width", "50%");
+        var box = Block(decl);
+
+        var placer = new BlockPlacer();
+        placer.Place(box, new ContainingBlock(100, 0, false), 0, 0);
+
+        Assert.Equal(50, box.Geometry.Width);
+    }
+
+    [Fact]
     public void Place_WidthAsPercent_ResolvesAgainstContainingBlock()
     {
         var decl = new CssDeclarationBlock();
