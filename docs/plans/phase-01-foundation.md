@@ -36,9 +36,24 @@ Konsep first-class yang diperkenalkan (mengganti kursor global):
       `BlockBox`/`InlineBox` domain lama ([LayoutTypes.cs](../../src/PdfEr.Core/Domain/Layout/LayoutTypes.cs)
       tidak disentuh). **Belum ada** `LineBox`/`InlineLevelBox` khusus untuk IFC — baru
       `LayoutBoxKind.Inline` sebagai penanda, belum ada struktur baris sungguhan.
-- [ ] **Box generation**: walk DOM → box tree, sisipkan **anonymous box** saat block & inline
-      bercampur. Belum dikerjakan — `LayoutBox`/`ComputedStyle` baru ada sebagai tipe data,
-      belum ada kode yang membangun pohon dari DOM.
+- [x] **Box generation**: `BoxTreeBuilder` di
+      [BoxTreeBuilder.cs](../../src/PdfEr.Core/Application/HtmlProcessing/BoxTreeBuilder.cs)
+      walks DOM → `LayoutBox` tree, menyisipkan **anonymous block box** saat children
+      block-level & inline-level bercampur (CSS 2.1 §9.2.1.1), sesuai `display:none`
+      dan skip `<style>/<script>/<noscript>` seperti `PdfConverterService.WalkDom`.
+      **Belum lengkap**: anonymous-wrapping hanya diterapkan untuk kontainer `Block`
+      biasa — inline container, table row/cell, dan flex/grid container punya aturan
+      children masing-masing yang belum diimplementasikan (dilewati apa adanya di slice
+      ini). Belum ada dispatch ke `ITagHandler` (builder tidak tahu soal list counter,
+      tabel, dsb — itu tanggung jawab Pass 1/2 & migrasi tag handler nanti).
+      **Efek samping yang ditemukan & diperbaiki**: default UA stylesheet di
+      `CssMerger.LoadDefaultStyles()` tidak pernah men-declare `display:block` untuk
+      `p`/`h1-h6`/`blockquote`/`pre`/`hr`/`section`/`article`/`header`/`footer`/`nav`/`main`
+      — pipeline streaming tidak masalah karena `LayoutEngine.LayoutBlock` memakai
+      allowlist nama tag, bukan computed `display`. Box generation yang baru justru
+      *harus* baca `display` asli, jadi menambahkan deklarasi itu ke stylesheet default
+      adalah perbaikan kebenaran (bukan cuma demi test), diverifikasi tidak mengubah
+      output SSIM harness (skor identik sebelum/sesudah).
 - [x] **ComputedStyle** sebagai tipe terpisah di
       [ComputedStyle.cs](../../src/PdfEr.Core/Domain/Styles/ComputedStyle.cs) — membungkus
       `CssDeclarationBlock` hasil cascade + pre-resolve font-size (pt & mm, cocok dengan
@@ -69,25 +84,27 @@ Konsep first-class yang diperkenalkan (mengganti kursor global):
       coupling dua arah antar proyek Domain/Application saat ini — perlu disatukan saat
       `IUnitConverter` dibereskan.
 
-## Progres nyata sesi ini (bukan Fase 1 selesai — lihat status per item di atas)
+## Progres nyata (2 sesi — bukan Fase 1 selesai, lihat status per item di atas)
 
-Slice pertama yang dikerjakan: **tipe data box-tree murni tambahan**, tanpa mengubah satu
-baris pun di pipeline streaming yang berjalan (`LayoutEngine`, `PdfConverterService`,
-tag handler). Tidak ada regresi mungkin karena kode lama tidak disentuh — dikonfirmasi
-lewat build solution penuh + 169/169 test `PdfEr.Core.Tests` (termasuk 19 test baru untuk
-`ComputedStyle`/`LayoutBox`) lolos stabil 3x berturut-turut, plus 54 test Infrastructure
-dan 46 test Integration tetap hijau.
+**Sesi 1**: tipe data box-tree tambahan (`LayoutBox`, `ComputedStyle`, dll.), tanpa
+mengubah pipeline streaming. Ditemukan & diperbaiki bug race-condition di `CssMerger`
+(cache statis `CssParser` dimutasi bersama lintas test paralel) selagi mengaudit alur
+`ResolveStyles` — lihat commit terpisah.
 
-Sebagai bagian dari verifikasi baseline sebelum menyentuh area ini, ditemukan dan diperbaiki
-bug race-condition nyata (tidak terkait box-tree) di `CssMerger`: `CssParser.Parse()` meng-
-cache `CssRule`/`CssDeclarationBlock` secara statis lintas proses, dan dua kode caller
-memutasi objek yang sama itu di tempat — race di bawah eksekusi test paralel xUnit. Lihat
-commit terpisah untuk detail; disebut di sini karena ditemukan selagi meng-audit `CssMerger`
-untuk memahami alur `ResolveStyles` yang akan dipanggil `ComputedStyle.Resolve` nantinya.
+**Sesi 2**: `BoxTreeBuilder` — box generation DOM → `LayoutBox` tree sungguhan, termasuk
+anonymous block wrapping. Menemukan & memperbaiki gap default-stylesheet (`display:block`
+hilang untuk beberapa tag block-level) yang tidak kelihatan di pipeline lama tapi jadi
+masalah nyata begitu kode baru membaca computed `display`. Diverifikasi lewat:
+- 177/177 `PdfEr.Core.Tests` (termasuk 8 test baru `BoxTreeBuilderTests`) stabil 3x run.
+- 54 Infrastructure + 46 Integration tetap hijau.
+- Fidelity harness (Fase 0): skor SSIM **identik** sebelum/sesudah perubahan stylesheet
+  default (0.998–0.999 di semua kategori) — bukti empiris pipeline streaming benar-benar
+  tidak terpengaruh, bukan cuma asumsi.
 
-**Belum dikerjakan (sengaja, untuk sesi terpisah)**: box generation dari DOM, Pass 1/2
-sungguhan, migrasi tag handler, adapter paint. Fase 1 tetap XL; slice ini hanya fondasi
-tipe data yang aman untuk dibangun di atasnya tanpa risiko regresi.
+**Belum dikerjakan (sengaja, untuk sesi terpisah)**: Pass 1 (intrinsic sizing), Pass 2
+(placement), migrasi tag handler, adapter paint, anonymous-wrapping untuk table/flex/grid
+container. Fase 1 tetap XL; dua slice ini baru fondasi tipe data + pohon box statis,
+belum ada satu pun angka geometri yang dihitung box-tree pipeline.
 
 ## Migrasi tag handler
 
