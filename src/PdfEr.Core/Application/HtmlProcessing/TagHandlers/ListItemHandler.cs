@@ -9,7 +9,7 @@ public sealed class ListItemHandler : ITagHandler
 
     public void Open(TagContext context)
     {
-        var box = context.LayoutEngine.CreateBlock("li", context.Attributes, context.ParentStyle);
+        var box = context.LayoutEngine.CreateBlock("li", context.Attributes, context.ParentStyle, context.Element);
 
         var listState = context.ListStack.Count > 0 ? context.ListStack.Peek() : null;
         var marker = listState?.GetMarker() ?? "\u2022";

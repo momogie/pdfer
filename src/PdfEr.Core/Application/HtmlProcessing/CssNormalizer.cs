@@ -57,6 +57,8 @@ public sealed class CssNormalizer
             block.SetProperty($"{property}-bottom", parts[2]);
             block.SetProperty($"{property}-left", parts[3]);
         }
+
+        block.RemoveProperty(property);
     }
 
     private void ExpandBorder(CssDeclarationBlock block)
@@ -73,6 +75,8 @@ public sealed class CssNormalizer
             }
         }
 
+        block.RemoveProperty("border");
+
         foreach (var side in new[] { "top", "right", "bottom", "left" })
         {
             var sideBorder = block.GetPropertyValue($"border-{side}");
@@ -84,6 +88,7 @@ public sealed class CssNormalizer
                 else if (IsBorderStyle(p)) block.SetProperty($"border-{side}-style", p);
                 else block.SetProperty($"border-{side}-color", p);
             }
+            block.RemoveProperty($"border-{side}");
         }
     }
 
@@ -141,6 +146,8 @@ public sealed class CssNormalizer
                 else if (parts[i] is "normal" or "small-caps") block.SetProperty("font-variant", parts[i]);
             }
         }
+
+        block.RemoveProperty("font");
     }
 
     private static bool IsFontSizeKeyword(string v) => v is "xx-small" or "x-small" or "small" or "medium" or "large" or "x-large" or "xx-large" or "smaller" or "larger";
@@ -159,6 +166,8 @@ public sealed class CssNormalizer
             else if (p is "scroll" or "fixed") block.SetProperty("background-attachment", p);
             else if (p is "left" or "center" or "right" or "top" or "bottom" || NumberWithUnit.IsMatch(p)) block.SetProperty("background-position", p);
         }
+
+        block.RemoveProperty("background");
     }
 
     private void ExpandListStyle(CssDeclarationBlock block)
@@ -173,6 +182,8 @@ public sealed class CssNormalizer
             else if (p is "inside" or "outside") block.SetProperty("list-style-position", p);
             else block.SetProperty("list-style-type", p);
         }
+
+        block.RemoveProperty("list-style");
     }
 
     private static void ExpandTextDecoration(CssDeclarationBlock block)
@@ -180,5 +191,6 @@ public sealed class CssNormalizer
         var td = block.GetPropertyValue("text-decoration");
         if (td == null) return;
         block.SetProperty("text-decoration-line", td);
+        block.RemoveProperty("text-decoration");
     }
 }

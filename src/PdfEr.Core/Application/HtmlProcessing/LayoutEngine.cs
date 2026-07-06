@@ -23,6 +23,8 @@ public sealed class LayoutEngine
     private BlockBox? _currentBlockContainer;
     public BlockBox? CurrentFlexContainer { get; set; }
     private float _flexChildStartX;
+    private float _flexRowMaxHeight;
+    private int _gridColumnIndex;
 
     public LayoutEngine(CssMerger cssMerger, CssNormalizer cssNormalizer, IUnitConverter unitConverter)
     {
@@ -140,9 +142,9 @@ public sealed class LayoutEngine
         return null;
     }
 
-    public BlockBox CreateBlock(string tagName, Dictionary<string, string> attributes, CssDeclarationBlock? parentStyle = null)
+    public BlockBox CreateBlock(string tagName, Dictionary<string, string> attributes, CssDeclarationBlock? parentStyle = null, AngleSharp.Dom.IElement? element = null)
     {
-        var styles = _cssMerger.ResolveStyles(tagName, attributes, parentStyle);
+        var styles = _cssMerger.ResolveStyles(tagName, attributes, parentStyle, element);
         styles = _cssNormalizer.ExpandShorthands(styles);
 
         var box = new BlockBox
@@ -195,18 +197,31 @@ public sealed class LayoutEngine
         var display = box.ComputedStyle?.GetPropertyValue("display");
         bool isInlineBlock = display == "inline-block";
         bool isFlex = display == "flex" || display == "inline-flex";
+        bool isGrid = display == "grid" || display == "inline-grid";
 
-        if (isFlex)
+        if (isFlex || isGrid)
         {
             box.Type = BlockBoxType.FlexContainer;
+            box.IsGrid = isGrid;
             box.FlexDirection = box.ComputedStyle?.GetPropertyValue("flex-direction") ?? "row";
             box.JustifyContent = box.ComputedStyle?.GetPropertyValue("justify-content") ?? "flex-start";
             box.AlignItems = box.ComputedStyle?.GetPropertyValue("align-items") ?? "stretch";
             box.FlexWrap = box.ComputedStyle?.GetPropertyValue("flex-wrap") ?? "nowrap";
 
-            var gap = box.ComputedStyle?.GetPropertyValue("gap") ?? box.ComputedStyle?.GetPropertyValue("row-gap");
+            var gap = box.ComputedStyle?.GetPropertyValue("gap") ?? box.ComputedStyle?.GetPropertyValue("column-gap");
             if (!string.IsNullOrWhiteSpace(gap) && gap != "normal")
                 box.FlexGap = ParseCssLength(gap, _currentPage.ContentBox.Width);
+
+            var rowGap = box.ComputedStyle?.GetPropertyValue("row-gap") ?? box.ComputedStyle?.GetPropertyValue("gap");
+            if (!string.IsNullOrWhiteSpace(rowGap) && rowGap != "normal")
+                box.GridRowGap = ParseCssLength(rowGap, _currentPage.ContentBox.Height);
+
+            if (isGrid)
+            {
+                var template = box.ComputedStyle?.GetPropertyValue("grid-template-columns");
+                var availableWidth = box.ContentWidth > 0 ? box.ContentWidth : _currentPage.ContentBox.Width;
+                box.GridColumnWidths = ParseGridTemplateColumns(template, availableWidth, box.FlexGap);
+            }
 
             _currentY += box.MarginTop;
             box.Y = _currentY;
@@ -289,6 +304,39 @@ public sealed class LayoutEngine
                         ComputedStyle = box.ComputedStyle
                     };
                     box.InlineContent.Add(inlineBox);
+                }
+
+                _currentPage.Blocks.Add(box);
+                _currentBlockContainer = box;
+                return;
+            }
+
+            if (CurrentFlexContainer != null && box != CurrentFlexContainer)
+            {
+                if (box.Height <= 0)
+                    box.Height = fontSize * 1.3f + box.PaddingTop + box.PaddingBottom;
+
+                var flexCssHeight = box.ComputedStyle?.GetPropertyValue("height");
+                if (!string.IsNullOrWhiteSpace(flexCssHeight) && flexCssHeight != "auto")
+                {
+                    var parsedH = ParseCssLength(flexCssHeight, _currentPage.ContentBox.Height);
+                    if (parsedH > 0) box.Height = parsedH;
+                }
+
+                if (!string.IsNullOrWhiteSpace(box.TextContent))
+                {
+                    var flexInline = new InlineBox
+                    {
+                        Text = box.TextContent,
+                        Type = InlineBoxType.Text,
+                        LinkUrl = box.LinkUrl,
+                        X = box.X + box.PaddingLeft + box.BorderLeft,
+                        Y = box.Y + box.PaddingTop,
+                        Width = box.ContentWidth,
+                        Height = fontSize * 1.3f,
+                        ComputedStyle = box.ComputedStyle
+                    };
+                    box.InlineContent.Add(flexInline);
                 }
 
                 _currentPage.Blocks.Add(box);
@@ -473,6 +521,8 @@ public sealed class LayoutEngine
         if (value.EndsWith("px")) return float.TryParse(value[..^2], out var v) ? v * 0.2646f : 0;
         if (value.EndsWith("cm")) return float.TryParse(value[..^2], out var v) ? v * 10f : 0;
         if (value.EndsWith("in")) return float.TryParse(value[..^2], out var v) ? v * 25.4f : 0;
+        if (value.EndsWith("rem")) return float.TryParse(value[..^3], out var v) ? v * 10f * 0.3528f : 0;
+        if (value.EndsWith("em")) return float.TryParse(value[..^2], out var v) ? v * 10f * 0.3528f : 0;
 
         if (float.TryParse(value, out var num)) return num;
 
@@ -499,23 +549,183 @@ public sealed class LayoutEngine
     {
         if (CurrentFlexContainer == null) return;
         var flex = CurrentFlexContainer;
+        var containerLeft = flex.X + flex.PaddingLeft + flex.BorderLeft;
+        var containerRight = flex.X + flex.Width - flex.PaddingRight - flex.BorderRight;
+
+        if (flex.IsGrid && flex.GridColumnWidths.Count > 0)
+        {
+            int colCount = flex.GridColumnWidths.Count;
+            if (_gridColumnIndex >= colCount)
+            {
+                // wrap to next row
+                _currentY += _flexRowMaxHeight + flex.GridRowGap;
+                _flexRowMaxHeight = 0;
+                _gridColumnIndex = 0;
+                _flexChildStartX = containerLeft;
+            }
+
+            child.Width = flex.GridColumnWidths[_gridColumnIndex];
+            child.X = _flexChildStartX;
+            child.Y = _currentY;
+
+            _flexChildStartX += child.Width + flex.FlexGap;
+            _gridColumnIndex++;
+            _flexRowMaxHeight = Math.Max(_flexRowMaxHeight, child.TotalHeight);
+            return;
+        }
+
+        bool wrap = flex.FlexWrap == "wrap" || flex.FlexWrap == "wrap-reverse";
+        if (wrap && _flexChildStartX + child.TotalWidth > containerRight && _flexChildStartX > containerLeft)
+        {
+            _currentY += _flexRowMaxHeight + flex.GridRowGap;
+            _flexRowMaxHeight = 0;
+            _flexChildStartX = containerLeft;
+        }
+
         child.X = _flexChildStartX;
-        child.Y = flex.Y + flex.PaddingTop + flex.BorderTop;
+        child.Y = _currentY;
         _flexChildStartX += child.Width + child.MarginLeft + child.MarginRight + flex.FlexGap;
+        _flexRowMaxHeight = Math.Max(_flexRowMaxHeight, child.TotalHeight);
     }
 
     public void BeginFlexContainer(BlockBox flex)
     {
         CurrentFlexContainer = flex;
         _flexChildStartX = flex.X + flex.PaddingLeft + flex.BorderLeft;
+        _flexRowMaxHeight = 0;
+        _gridColumnIndex = 0;
+        _currentY = flex.Y + flex.PaddingTop + flex.BorderTop;
     }
 
     public void EndFlexContainer()
     {
+        var flex = CurrentFlexContainer;
         CurrentFlexContainer = null;
+        if (flex == null) return;
+
+        _currentY += _flexRowMaxHeight;
+        flex.Height = Math.Max(flex.Height, _currentY - flex.Y);
+        _currentY += flex.MarginBottom;
+
+        _currentInlineX = _currentPage.ContentBox.X;
+        _currentInlineY = _currentY;
+        _currentInlineLineHeight = 0;
     }
 
+    private static List<float> ParseGridTemplateColumns(string? template, float availableWidth, float gap)
+    {
+        var widths = new List<float>();
+        if (string.IsNullOrWhiteSpace(template))
+        {
+            widths.Add(availableWidth);
+            return widths;
+        }
+
+        template = template.Trim();
+
+        var repeatMatch = System.Text.RegularExpressions.Regex.Match(
+            template, @"repeat\(\s*(?:(\d+)|auto-fit|auto-fill)\s*,\s*(.+?)\)\s*$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        if (repeatMatch.Success)
+        {
+            var trackSpec = repeatMatch.Groups[2].Value.Trim();
+            float minTrack = 100f;
+            var minmaxMatch = System.Text.RegularExpressions.Regex.Match(
+                trackSpec, @"minmax\(\s*([^,]+)\s*,\s*([^)]+)\s*\)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (minmaxMatch.Success)
+                minTrack = ParseCssLength(minmaxMatch.Groups[1].Value.Trim(), availableWidth);
+            else
+                minTrack = ParseCssLength(trackSpec, availableWidth);
+
+            if (minTrack <= 0) minTrack = 100f;
+
+            int explicitCount = repeatMatch.Groups[1].Success ? int.Parse(repeatMatch.Groups[1].Value) : 0;
+            int colCount = explicitCount > 0
+                ? explicitCount
+                : Math.Max(1, (int)((availableWidth + gap) / (minTrack + gap)));
+
+            float colWidth = (availableWidth - gap * (colCount - 1)) / colCount;
+            if (colWidth < minTrack && explicitCount == 0)
+            {
+                colCount = Math.Max(1, colCount - 1);
+                colWidth = (availableWidth - gap * (colCount - 1)) / colCount;
+            }
+
+            for (int i = 0; i < colCount; i++)
+                widths.Add(colWidth);
+
+            return widths;
+        }
+
+        var tracks = SplitTopLevel(template);
+        var fixedWidths = new float[tracks.Count];
+        var frFactors = new float[tracks.Count];
+        float fixedTotal = 0;
+        float frTotal = 0;
+
+        for (int i = 0; i < tracks.Count; i++)
+        {
+            var t = tracks[i].Trim();
+            if (t.EndsWith("fr", StringComparison.OrdinalIgnoreCase))
+            {
+                if (float.TryParse(t[..^2], out var fr)) frFactors[i] = fr;
+                else frFactors[i] = 1f;
+                frTotal += frFactors[i];
+            }
+            else
+            {
+                fixedWidths[i] = ParseCssLength(t, availableWidth);
+                fixedTotal += fixedWidths[i];
+            }
+        }
+
+        float totalGap = gap * Math.Max(0, tracks.Count - 1);
+        float remaining = Math.Max(0, availableWidth - fixedTotal - totalGap);
+
+        for (int i = 0; i < tracks.Count; i++)
+        {
+            if (frFactors[i] > 0)
+                widths.Add(frTotal > 0 ? remaining * frFactors[i] / frTotal : 0);
+            else
+                widths.Add(fixedWidths[i]);
+        }
+
+        if (widths.Count == 0)
+            widths.Add(availableWidth);
+
+        return widths;
+    }
+
+    private static List<string> SplitTopLevel(string value)
+    {
+        var parts = new List<string>();
+        int depth = 0;
+        int start = 0;
+        for (int i = 0; i < value.Length; i++)
+        {
+            if (value[i] == '(') depth++;
+            else if (value[i] == ')') depth--;
+            else if (value[i] == ' ' && depth == 0)
+            {
+                if (i > start) parts.Add(value[start..i]);
+                start = i + 1;
+            }
+        }
+        if (start < value.Length) parts.Add(value[start..]);
+        return parts;
+    }
+
+    // Returns the font size expressed in millimetres (layout units).
+    // px/pt/keyword inputs are point-based per CSS; convert points -> mm (1pt = 0.3528mm).
+    private const float PtToMm = 0.3528f;
+
     private static float GetFontSize(CssDeclarationBlock? style)
+    {
+        return GetFontSizePt(style) * PtToMm;
+    }
+
+    private static float GetFontSizePt(CssDeclarationBlock? style)
     {
         var val = style?.GetPropertyValue("font-size");
         if (val == null) return 10f;
@@ -524,9 +734,9 @@ public sealed class LayoutEngine
         if (val.EndsWith("pt")) return float.TryParse(val[..^2], out var v) ? v : 10f;
         if (val.EndsWith("px")) return float.TryParse(val[..^2], out var v) ? v * 0.75f : 10f;
         if (val.EndsWith("mm")) return float.TryParse(val[..^2], out var v) ? v * 2.8346f : 10f;
+        if (val.EndsWith("rem")) return float.TryParse(val[..^3], out var v) ? v * 10f : 10f;
         if (val.EndsWith("em")) return float.TryParse(val[..^2], out var v) ? v * 10f : 10f;
         if (val.EndsWith("%")) return float.TryParse(val[..^1], out var v) ? v * 0.1f : 10f;
-        if (val.EndsWith("rem")) return float.TryParse(val[..^3], out var v) ? v * 10f : 10f;
 
         return val switch
         {

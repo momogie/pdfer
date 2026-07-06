@@ -12,7 +12,8 @@ public abstract class BlockTagHandler : ITagHandler
         var box = context.LayoutEngine.CreateBlock(
             context.TagName,
             context.Attributes,
-            context.ParentStyle);
+            context.ParentStyle,
+            context.Element);
 
         context.CurrentBlock = box;
     }

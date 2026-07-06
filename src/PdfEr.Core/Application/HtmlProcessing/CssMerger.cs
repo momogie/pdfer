@@ -1,12 +1,18 @@
+using System.Text.RegularExpressions;
+using AngleSharp.Dom;
 using PdfEr.Core.Domain.Styles;
 
 namespace PdfEr.Core.Application.HtmlProcessing;
 
 public sealed class CssMerger
 {
+    private static readonly Regex VarRegex = new(@"var\(\s*(--[\w-]+)\s*(?:,\s*([^()]*(?:\([^()]*\)[^()]*)*))?\)", RegexOptions.Compiled);
+
     private readonly CssStylesheet _defaultStylesheet;
     private readonly CssStylesheet _userStylesheet;
     private readonly CssParser _parser;
+    private readonly CssNormalizer _normalizer;
+    private readonly Dictionary<string, string> _customProperties = new(StringComparer.OrdinalIgnoreCase);
 
     private static readonly HashSet<string> InheritedProperties = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -22,9 +28,10 @@ public sealed class CssMerger
         "white-space", "widows", "word-spacing"
     };
 
-    public CssMerger(CssParser parser)
+    public CssMerger(CssParser parser, CssNormalizer normalizer)
     {
         _parser = parser;
+        _normalizer = normalizer;
         _defaultStylesheet = new CssStylesheet();
         _userStylesheet = new CssStylesheet();
         LoadDefaultStyles();
@@ -70,31 +77,101 @@ public sealed class CssMerger
             div { display:block; }
             span { display:inline; }
         ";
-        _defaultStylesheet.Merge(_parser.Parse(defaults));
+        var parsed = _parser.Parse(defaults);
+        foreach (var rule in parsed.Rules)
+            ExpandRuleInPlace(rule);
+        _defaultStylesheet.Merge(parsed);
+    }
+
+    private void ExpandRuleInPlace(CssRule rule)
+    {
+        var expanded = _normalizer.ExpandShorthands(rule.Declarations);
+        rule.Declarations.Clear();
+        foreach (var kvp in expanded.AllProperties)
+            rule.Declarations.SetProperty(kvp.Key, kvp.Value.RawValue, kvp.Value.IsImportant);
     }
 
     public void AddUserStylesheet(CssStylesheet stylesheet)
     {
-        foreach (var rule in stylesheet.Rules)
+        var allRules = new List<CssRule>(stylesheet.Rules);
+        foreach (var mediaRule in stylesheet.MediaRules)
+        {
+            if (MediaQueryMatchesPrint(mediaRule.MediaQuery))
+                allRules.AddRange(mediaRule.Rules);
+        }
+
+        CollectCustomProperties(allRules);
+
+        foreach (var rule in allRules)
+        {
+            ResolveVariablesInPlace(rule.Declarations);
+            ExpandRuleInPlace(rule);
             _userStylesheet.Rules.Add(rule);
+        }
 
         foreach (var rule in stylesheet.FontFaceRules)
             _userStylesheet.FontFaceRules.Add(rule);
 
         foreach (var rule in stylesheet.PageRules)
             _userStylesheet.PageRules.Add(rule);
+    }
 
-        foreach (var mediaRule in stylesheet.MediaRules)
+    private void CollectCustomProperties(List<CssRule> rules)
+    {
+        foreach (var rule in rules)
         {
-            if (MediaQueryMatchesPrint(mediaRule.MediaQuery))
+            if (!SelectorDefinesRoot(rule.Selector)) continue;
+
+            foreach (var kvp in rule.Declarations.AllProperties)
             {
-                foreach (var rule in mediaRule.Rules)
-                    _userStylesheet.Rules.Add(rule);
+                if (kvp.Key.StartsWith("--", StringComparison.Ordinal))
+                    _customProperties[kvp.Key] = kvp.Value.RawValue;
             }
         }
     }
 
-    public CssDeclarationBlock ResolveStyles(string tagName, Dictionary<string, string> attributes, CssDeclarationBlock? parentInherited)
+    private static bool IsRootOnlySelector(string selector)
+    {
+        return selector.Split(',', StringSplitOptions.TrimEntries)
+            .All(p => p.Equals(":root", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool SelectorDefinesRoot(string selector)
+    {
+        return selector.Split(',', StringSplitOptions.TrimEntries)
+            .Any(p => p.Equals(":root", StringComparison.OrdinalIgnoreCase) ||
+                      p.Equals("html", StringComparison.OrdinalIgnoreCase) ||
+                      p.Equals("body", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private void ResolveVariablesInPlace(CssDeclarationBlock block)
+    {
+        foreach (var kvp in block.AllProperties.ToList())
+        {
+            if (kvp.Key.StartsWith("--", StringComparison.Ordinal)) continue;
+            if (!kvp.Value.RawValue.Contains("var(", StringComparison.OrdinalIgnoreCase)) continue;
+
+            var resolved = ResolveVarValue(kvp.Value.RawValue);
+            block.SetProperty(kvp.Key, resolved, kvp.Value.IsImportant);
+        }
+    }
+
+    private string ResolveVarValue(string value)
+    {
+        for (int i = 0; i < 5 && value.Contains("var(", StringComparison.OrdinalIgnoreCase); i++)
+        {
+            value = VarRegex.Replace(value, m =>
+            {
+                var varName = m.Groups[1].Value;
+                if (_customProperties.TryGetValue(varName, out var resolved))
+                    return resolved;
+                return m.Groups[2].Success ? m.Groups[2].Value.Trim() : string.Empty;
+            });
+        }
+        return value;
+    }
+
+    public CssDeclarationBlock ResolveStyles(string tagName, Dictionary<string, string> attributes, CssDeclarationBlock? parentInherited, IElement? element = null)
     {
         var result = new CssDeclarationBlock();
 
@@ -107,25 +184,29 @@ public sealed class CssMerger
             }
         }
 
-        CollectMatchingRules(_defaultStylesheet.Rules, tagName, attributes, result);
-        CollectMatchingRules(_userStylesheet.Rules, tagName, attributes, result);
+        CollectMatchingRules(_defaultStylesheet.Rules, tagName, attributes, element, result);
+        CollectMatchingRules(_userStylesheet.Rules, tagName, attributes, element, result);
 
         if (attributes.TryGetValue("style", out var inlineStyle) && !string.IsNullOrWhiteSpace(inlineStyle))
         {
             var inlineDecl = CssParser.ParseDeclarations(inlineStyle);
+            ResolveVariablesInPlace(inlineDecl);
+            inlineDecl = _normalizer.ExpandShorthands(inlineDecl);
             result.MergeFrom(inlineDecl, overrideImportant: true);
         }
 
         return result;
     }
 
-    private static void CollectMatchingRules(List<CssRule> rules, string tagName, Dictionary<string, string> attributes, CssDeclarationBlock result)
+    private static void CollectMatchingRules(List<CssRule> rules, string tagName, Dictionary<string, string> attributes, IElement? element, CssDeclarationBlock result)
     {
         var matched = new List<(CssRule rule, int specificitySort)>();
 
         foreach (var rule in rules)
         {
-            if (SelectorMatches(rule.Selector, tagName, attributes))
+            if (IsRootOnlySelector(rule.Selector)) continue;
+
+            if (SelectorMatches(rule.Selector, tagName, attributes, element))
             {
                 int sort = rule.Specificity.IdCount * 1_000_000 +
                            rule.Specificity.ClassCount * 10_000 +
@@ -164,13 +245,13 @@ public sealed class CssMerger
         return false;
     }
 
-    private static bool SelectorMatches(string selector, string tagName, Dictionary<string, string> attributes)
+    private static bool SelectorMatches(string selector, string tagName, Dictionary<string, string> attributes, IElement? element)
     {
         var parts = selector.Split(',');
-        return parts.Any(p => MatchesSingleSelector(p.Trim(), tagName, attributes));
+        return parts.Any(p => MatchesSingleSelector(p.Trim(), tagName, attributes, element));
     }
 
-    private static bool MatchesSingleSelector(string selector, string tagName, Dictionary<string, string> attributes)
+    private static bool MatchesSingleSelector(string selector, string tagName, Dictionary<string, string> attributes, IElement? element)
     {
         selector = selector.Trim();
 
@@ -183,24 +264,78 @@ public sealed class CssMerger
         }
 
         var combinators = SplitByCombinator(selector);
+        int lastIdx = combinators.Length - 1;
 
-        for (int i = combinators.Length - 1; i >= 0; i--)
+        if (!MatchesSimpleSelector(combinators[lastIdx].Trim(), tagName, attributes))
+            return false;
+
+        if (element == null) return false;
+
+        IElement? cursor = element;
+        int i = lastIdx - 1;
+        while (i >= 0)
         {
+            char combinator = GetCombinator(combinators[i]);
+            i--;
+            if (i < 0) break;
             var part = combinators[i].Trim();
-            char combinator = i > 0 ? GetCombinator(combinators[i - 1]) : ' ';
+            i--;
 
-            if (i == combinators.Length - 1)
+            if (combinator == '>')
             {
-                if (!MatchesSimpleSelector(part, tagName, attributes))
+                cursor = cursor?.ParentElement;
+                if (cursor == null || !MatchesSimpleSelector(part, cursor.TagName.ToLowerInvariant(), GetElementAttributes(cursor)))
                     return false;
             }
-            else
+            else if (combinator == '+')
             {
-                return MatchesSimpleSelector(part, tagName, attributes);
+                cursor = cursor?.PreviousElementSibling;
+                if (cursor == null || !MatchesSimpleSelector(part, cursor.TagName.ToLowerInvariant(), GetElementAttributes(cursor)))
+                    return false;
+            }
+            else if (combinator == '~')
+            {
+                var sib = cursor?.PreviousElementSibling;
+                bool found = false;
+                while (sib != null)
+                {
+                    if (MatchesSimpleSelector(part, sib.TagName.ToLowerInvariant(), GetElementAttributes(sib)))
+                    {
+                        found = true;
+                        cursor = sib;
+                        break;
+                    }
+                    sib = sib.PreviousElementSibling;
+                }
+                if (!found) return false;
+            }
+            else // descendant combinator (space): any ancestor
+            {
+                var ancestor = cursor?.ParentElement;
+                bool found = false;
+                while (ancestor != null)
+                {
+                    if (MatchesSimpleSelector(part, ancestor.TagName.ToLowerInvariant(), GetElementAttributes(ancestor)))
+                    {
+                        found = true;
+                        cursor = ancestor;
+                        break;
+                    }
+                    ancestor = ancestor.ParentElement;
+                }
+                if (!found) return false;
             }
         }
 
         return true;
+    }
+
+    private static Dictionary<string, string> GetElementAttributes(IElement element)
+    {
+        var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var attr in element.Attributes)
+            dict[attr.Name] = attr.Value;
+        return dict;
     }
 
     private static bool MatchesSimpleSelector(string selector, string tagName, Dictionary<string, string> attributes)

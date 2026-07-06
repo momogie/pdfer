@@ -37,7 +37,7 @@ public sealed class ImgHandler : ITagHandler
         float widthMm = imgWidth * pxToMm;
         float heightMm = imgHeight * pxToMm;
 
-        var box = context.LayoutEngine.CreateBlock("img", context.Attributes, context.ParentStyle);
+        var box = context.LayoutEngine.CreateBlock("img", context.Attributes, context.ParentStyle, context.Element);
         box.Width = widthMm;
         box.Height = heightMm;
         box.TextContent = "";

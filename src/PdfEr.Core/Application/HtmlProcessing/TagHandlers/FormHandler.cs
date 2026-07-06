@@ -11,7 +11,7 @@ public sealed class FormHandler : ITagHandler
     public void Open(TagContext context)
     {
         var box = context.LayoutEngine.CreateBlock(
-            context.TagName, context.Attributes, context.ParentStyle);
+            context.TagName, context.Attributes, context.ParentStyle, context.Element);
         context.CurrentBlock = box;
     }
 

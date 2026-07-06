@@ -9,7 +9,7 @@ public sealed class BreakHandler : ITagHandler
 
     public void Open(TagContext context)
     {
-        var box = context.LayoutEngine.CreateBlock("br", context.Attributes, context.ParentStyle);
+        var box = context.LayoutEngine.CreateBlock("br", context.Attributes, context.ParentStyle, context.Element);
         box.TextContent = "\n";
         context.CurrentBlock = box;
     }

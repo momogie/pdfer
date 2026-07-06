@@ -93,6 +93,9 @@ public sealed class BlockBox
     public string? AlignItems { get; set; }
     public float FlexGap { get; set; }
     public string? FlexWrap { get; set; }
+    public bool IsGrid { get; set; }
+    public List<float> GridColumnWidths { get; set; } = new();
+    public float GridRowGap { get; set; }
 
     public float ContentWidth => Width - PaddingLeft - PaddingRight - BorderLeft - BorderRight;
     public float ContentHeight => Height - PaddingTop - PaddingBottom - BorderTop - BorderBottom;

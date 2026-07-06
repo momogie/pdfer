@@ -31,7 +31,7 @@ public sealed class SvgHandler : ITagHandler
         float widthMm = result.PixelWidth * pxToMm;
         float heightMm = result.PixelHeight * pxToMm;
 
-        var box = context.LayoutEngine.CreateBlock("svg", context.Attributes, context.ParentStyle);
+        var box = context.LayoutEngine.CreateBlock("svg", context.Attributes, context.ParentStyle, context.Element);
         box.Width = widthMm;
         box.Height = heightMm;
         box.TextContent = "";

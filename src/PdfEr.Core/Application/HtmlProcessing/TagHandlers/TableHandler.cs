@@ -23,7 +23,7 @@ public sealed class TableHandler : ITagHandler
         }
 
         var box = context.LayoutEngine.CreateBlock(
-            context.TagName, context.Attributes, context.ParentStyle);
+            context.TagName, context.Attributes, context.ParentStyle, context.Element);
         context.CurrentBlock = box;
     }
 

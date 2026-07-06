@@ -97,13 +97,16 @@ public sealed class CssParser
     {
         foreach (Match match in RuleRegex.Matches(cssText))
         {
-            var selector = match.Groups[1].Value.Trim();
-            if (selector.StartsWith("@")) continue;
+            var selectorList = match.Groups[1].Value.Trim();
+            if (selectorList.StartsWith("@")) continue;
 
             var decl = ParseDeclarations(match.Groups[2].Value);
-            var specificity = ComputeSpecificity(selector);
 
-            rules.Add(new CssRule(selector, specificity, decl));
+            foreach (var selector in selectorList.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+            {
+                var specificity = ComputeSpecificity(selector);
+                rules.Add(new CssRule(selector, specificity, decl.Clone()));
+            }
         }
     }
 

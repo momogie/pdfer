@@ -19,7 +19,7 @@ public sealed class ListHandler : BlockTagHandler
         context.ListStack.Push(new ListState(isOrdered, start, listStyleType));
 
         var box = context.LayoutEngine.CreateBlock(
-            context.TagName, context.Attributes, context.ParentStyle);
+            context.TagName, context.Attributes, context.ParentStyle, context.Element);
 
         var currentPage = context.CurrentPage;
         box.X = currentPage.ContentBox.X;

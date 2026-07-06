@@ -1398,7 +1398,7 @@ public sealed class HrHandlerTests
     private static TagContext CreateTagContext(string tagName, CssDeclarationBlock? overrideStyle = null)
     {
         var parser = new CssParser();
-        var merger = new CssMerger(parser);
+        var merger = new CssMerger(parser, new CssNormalizer());
         var normalizer = new CssNormalizer();
         var converter = NSubstitute.Substitute.For<IUnitConverter>();
         var engine = new LayoutEngine(merger, normalizer, converter);
@@ -1458,7 +1458,7 @@ public sealed class BlockTagHandlerTests
     private static TagContext CreateHandlerContext(string tagName)
     {
         var parser = new CssParser();
-        var merger = new CssMerger(parser);
+        var merger = new CssMerger(parser, new CssNormalizer());
         var normalizer = new CssNormalizer();
         var converter = NSubstitute.Substitute.For<IUnitConverter>();
         var engine = new LayoutEngine(merger, normalizer, converter);
@@ -1504,7 +1504,7 @@ public sealed class InlineTagHandlerTests
     private static TagContext CreateInlineContext(string tagName)
     {
         var parser = new CssParser();
-        var merger = new CssMerger(parser);
+        var merger = new CssMerger(parser, new CssNormalizer());
         var normalizer = new CssNormalizer();
         var converter = NSubstitute.Substitute.For<IUnitConverter>();
         var engine = new LayoutEngine(merger, normalizer, converter);
@@ -1529,7 +1529,7 @@ public class CssWidthHeightTests
     public void CreateBlock_WithCssWidthMm_SetsBoxWidth()
     {
         var parser = new CssParser();
-        var merger = new CssMerger(parser);
+        var merger = new CssMerger(parser, new CssNormalizer());
         var normalizer = new CssNormalizer();
         var converter = NSubstitute.Substitute.For<IUnitConverter>();
         var engine = new LayoutEngine(merger, normalizer, converter);
@@ -1546,7 +1546,7 @@ public class CssWidthHeightTests
     public void CreateBlock_WithCssWidthPercent_ScalesToParent()
     {
         var parser = new CssParser();
-        var merger = new CssMerger(parser);
+        var merger = new CssMerger(parser, new CssNormalizer());
         var normalizer = new CssNormalizer();
         var converter = NSubstitute.Substitute.For<IUnitConverter>();
         var engine = new LayoutEngine(merger, normalizer, converter);
@@ -1564,7 +1564,7 @@ public class CssWidthHeightTests
     public void LayoutBlock_WithCssHeightMm_SetsBoxHeight()
     {
         var parser = new CssParser();
-        var merger = new CssMerger(parser);
+        var merger = new CssMerger(parser, new CssNormalizer());
         var normalizer = new CssNormalizer();
         var converter = NSubstitute.Substitute.For<IUnitConverter>();
         var engine = new LayoutEngine(merger, normalizer, converter);
@@ -1583,7 +1583,7 @@ public class CssWidthHeightTests
     public void CreateBlock_WithoutCssWidth_UsesContentBoxWidth()
     {
         var parser = new CssParser();
-        var merger = new CssMerger(parser);
+        var merger = new CssMerger(parser, new CssNormalizer());
         var normalizer = new CssNormalizer();
         var converter = NSubstitute.Substitute.For<IUnitConverter>();
         var engine = new LayoutEngine(merger, normalizer, converter);
@@ -1599,7 +1599,7 @@ public class CssWidthHeightTests
     public void CreateBlock_WithCssWidthAuto_IgnoresAndUsesDefault()
     {
         var parser = new CssParser();
-        var merger = new CssMerger(parser);
+        var merger = new CssMerger(parser, new CssNormalizer());
         var normalizer = new CssNormalizer();
         var converter = NSubstitute.Substitute.For<IUnitConverter>();
         var engine = new LayoutEngine(merger, normalizer, converter);
@@ -1616,7 +1616,7 @@ public class CssWidthHeightTests
     public void LayoutBlock_WithoutCssHeight_AutoCalculates()
     {
         var parser = new CssParser();
-        var merger = new CssMerger(parser);
+        var merger = new CssMerger(parser, new CssNormalizer());
         var normalizer = new CssNormalizer();
         var converter = NSubstitute.Substitute.For<IUnitConverter>();
         var engine = new LayoutEngine(merger, normalizer, converter);
@@ -1719,7 +1719,7 @@ public sealed class ListHandlerTests
     private static TagContext CreateListContext(string tagName, Dictionary<string, string>? attrs = null)
     {
         var parser = new CssParser();
-        var merger = new CssMerger(parser);
+        var merger = new CssMerger(parser, new CssNormalizer());
         var normalizer = new CssNormalizer();
         var converter = NSubstitute.Substitute.For<IUnitConverter>();
         var engine = new LayoutEngine(merger, normalizer, converter);

@@ -171,7 +171,7 @@ public sealed class PdfConverterService : IPdfConverter
                     continue;
 
                 var attrs = GetAttributes(el);
-                var resolved = _cssMerger.ResolveStyles(tagName, attrs, parentStyle);
+                var resolved = _cssMerger.ResolveStyles(tagName, attrs, parentStyle, el);
                 resolved = _cssNormalizer.ExpandShorthands(resolved);
 
                 if (IsDisplayNone(resolved))
@@ -204,8 +204,8 @@ public sealed class PdfConverterService : IPdfConverter
                         _currentBlock = context.CurrentBlock;
                     }
 
-                    // For flex containers, layout before walking children
-                    bool isFlex = resolved?.GetPropertyValue("display") is "flex" or "inline-flex";
+                    // For flex/grid containers, layout before walking children
+                    bool isFlex = resolved?.GetPropertyValue("display") is "flex" or "inline-flex" or "grid" or "inline-grid";
                     if (isFlex && context.CurrentBlock != null)
                     {
                         _layoutEngine.LayoutBlock(context.CurrentBlock, _currentConfig);
@@ -214,15 +214,15 @@ public sealed class PdfConverterService : IPdfConverter
                     if (tagName is not "td" and not "th" and not "svg")
                         WalkDom(el, resolved);
 
-                    // Flex child positioning for non-flex blocks
-                    if (_layoutEngine.CurrentFlexContainer != null && context.CurrentBlock != null && context.CurrentBlock != _layoutEngine.CurrentFlexContainer)
-                    {
-                        _layoutEngine.PositionFlexChild(context.CurrentBlock);
-                    }
-
                     if (!isFlex && context.CurrentBlock != null)
                     {
                         _layoutEngine.LayoutBlock(context.CurrentBlock, _currentConfig);
+                    }
+
+                    // Flex/grid child positioning for non-flex-container blocks
+                    if (_layoutEngine.CurrentFlexContainer != null && context.CurrentBlock != null && context.CurrentBlock != _layoutEngine.CurrentFlexContainer)
+                    {
+                        _layoutEngine.PositionFlexChild(context.CurrentBlock);
                     }
 
                     if (isFlex)

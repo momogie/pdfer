@@ -47,6 +47,16 @@ public sealed class CssDeclarationBlock
         _properties[propertyName] = new CssPropertyValue(value, important);
     }
 
+    public void RemoveProperty(string propertyName)
+    {
+        _properties.Remove(propertyName);
+    }
+
+    public void Clear()
+    {
+        _properties.Clear();
+    }
+
     public CssDeclarationBlock Clone()
     {
         var clone = new CssDeclarationBlock();
