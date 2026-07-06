@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Visual Elements Test</title>
+    <style>
+        body {
+            font-family: DejaVu Sans, Arial, sans-serif;
+            font-size: 11pt;
+            margin: 2cm;
+        }
+        h2 { font-size: 14pt; margin-top: 0.5cm; }
+        .box {
+            padding: 0.5cm;
+            margin: 0.3cm;
+            background-color: #f0f0f0;
+            border: 1px solid #333;
+        }
+        .colored-bg {
+            background-color: #e3f2fd;
+            padding: 0.3cm;
+            margin: 0.2cm 0;
+            border-left: 3px solid #2196F3;
+        }
+        strong { color: #d32f2f; }
+        em { color: #1976d2; }
+    </style>
+</head>
+<body>
+    <h1>Visual Elements Test</h1>
+
+    <h2>Box with Border</h2>
+    <div class="box">
+        This box has a border and background color. It should be rendered with proper padding and spacing.
+    </div>
+
+    <h2>Colored Text</h2>
+    <p>This line contains <strong>red bold text</strong> and <em>blue italic text</em> to test color rendering.</p>
+
+    <h2>Background Colors</h2>
+    <div class="colored-bg">
+        This section has a light blue background color and a blue left border to highlight important content.
+    </div>
+
+    <h2>Multiple Boxes</h2>
+    <div class="box">Box 1: Simple text box</div>
+    <div class="box">Box 2: Another text box</div>
+    <div class="box">Box 3: Third text box</div>
+</body>
+</html>

@@ -8,5 +8,6 @@
     <Project Path="tests/PdfEr.Core.Tests/PdfEr.Core.Tests.csproj" />
     <Project Path="tests/PdfEr.Infrastructure.Tests/PdfEr.Infrastructure.Tests.csproj" />
     <Project Path="tests/PdfEr.IntegrationTests/PdfEr.IntegrationTests.csproj" />
+    <Project Path="tests/PdfEr.FidelityTests/PdfEr.FidelityTests.csproj" />
   </Folder>
 </Solution>

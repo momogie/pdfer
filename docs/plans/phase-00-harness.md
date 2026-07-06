@@ -17,17 +17,45 @@ Tanpa alat ukur, klaim "≥ 95% mirip browser" tak terbukti. Fase ini membangun 
 
 ## Checklist
 
-- [ ] Proyek `tests/PdfEr.FidelityTests` (atau skrip di `tests/fidelity/`).
-- [ ] Skrip render Chromium headless (deteksi Chrome/Edge lokal atau Playwright) → PDF ground truth.
-- [ ] Rasterizer PDF→PNG (pakai SkiaSharp/PDFium yang sudah ada, atau `pdftoppm`).
-- [ ] Implementasi metrik **SSIM** + skor perseptual sederhana; hasil per halaman.
-- [ ] **Determinisme font**: paksa set font yang sama untuk Chromium & PdfEr (bundel
-      DejaVu/Noto) agar perbedaan bukan karena font berbeda.
-- [ ] Korpus uji awal per kategori di `tests/fidelity/cases/` (mulai 10–15 file):
-      `text-*`, `table-*`, `flex-*`, `grid-*`, `visual-*`, `pagination-*`, `cascade-*`.
-- [ ] Runner menghasilkan **laporan skor** (JSON + HTML galeri diff berdampingan).
-- [ ] Ambang CI: gagal bila skor kategori turun dari baseline tersimpan (regression gate).
-- [ ] Simpan **baseline awal** skor apa adanya (titik berangkat, lihat milestone di roadmap).
+- [x] Proyek `tests/PdfEr.FidelityTests` (xUnit, net10.0, referenced from `PdfEr.slnx`).
+- [x] Ground truth via **Playwright Chromium** (`page.PdfAsync`), bukan shell manual ke
+      Chrome/Edge — lebih stabil lintas mesin (auto-download browser via `playwright.ps1`).
+- [x] Rasterizer PDF→PNG via **PDFtoImage** (wrapper PDFium) — dipilih setelah percobaan
+      screenshot PDF lewat Chromium headless gagal (`net::ERR_ABORTED`, PDF viewer plugin
+      tidak stabil di mode headless).
+- [x] Implementasi metrik **SSIM** (windowed 8×8, stride 4, luminance-based) di
+      `SsimCalculator.cs` — catatan: ini aproksimasi kasar, bukan SSIM referensi penuh;
+      cukup untuk regression signal, perlu diperhalus jika dipakai sebagai gate ketat.
+- [ ] **Determinisme font**: belum dipaksa. Kasus uji saat ini pakai `DejaVu Sans` yang
+      kemungkinan fallback ke font sistem berbeda di Chromium vs PdfEr — risiko skor
+      SSIM tinggi secara **kebetulan** (dokumen sederhana, sedikit teks). Perlu diverifikasi
+      dengan kasus teks-berat sebelum dipercaya sebagai baseline.
+- [x] Korpus awal (5 file, bukan 10–15 target): `text-simple`, `text-alignment`,
+      `block-headings-lists`, `visual-borders-colors`, `table-basic`. **Belum ada**
+      `flex-*`, `grid-*`, `pagination-*`, `cascade-*` — kategori itu skornya akan jelek
+      begitu ditambahkan (fitur belum diimplementasi penuh, lihat baseline-audit.md).
+- [x] Toleransi ukuran halaman (±10px) sebelum crop-to-common-size untuk redam rounding
+      DPI antar-renderer.
+- [ ] Runner baru cetak **ringkasan teks** (console + JSON `fidelity-report.json` +
+      `fidelity-summary.txt`) — **belum ada galeri HTML diff berdampingan**.
+- [ ] **Belum ada CI gate** (regression terhadap baseline tersimpan) — saat ini cuma
+      dijalankan manual via `dotnet test`.
+- [ ] Baseline resmi belum disimpan sebagai file terpisah untuk dibandingkan; angka di
+      bawah adalah hasil run pertama, bukan baseline yang dikunci.
+
+## Hasil run pertama (bukan baseline resmi, lihat catatan font di atas)
+
+```
+block: 1/1 passed, avg SSIM=0.9989
+table: 1/1 passed, avg SSIM=0.9990
+text:  2/2 passed, avg SSIM=0.9986
+visual: 1/1 passed, avg SSIM=0.9981
+```
+
+Skor ini **tidak boleh dibaca sebagai "PdfEr sudah 99% browser-grade"** — kasus ujinya
+sengaja sederhana (satu halaman, tanpa flex/grid/pagination) sehingga cocok dengan gap
+arsitektural yang didokumentasikan di `baseline-audit.md`. Nilainya berguna sebagai
+smoke-test bahwa harness bekerja, bukan sebagai bukti fidelity keseluruhan.
 
 ## Catatan implementasi
 
