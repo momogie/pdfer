@@ -279,12 +279,20 @@ public sealed class BlockPlacer
         var maxWidth = Math.Max(0, containingBlock.Width);
         var spaceWidthMm = items.Count > 0 ? items[0].Style.FontSizeMm * 0.28f : 0; // approx space width
 
+        // CSS 2.1 16.1 "text-indent": shifts the first formatted line only.
+        // Negative values are allowed (outdent); resolves against the
+        // containing block width for percentages, same as ResolveExplicitLength.
+        var textIndentMm = CssLengthParser.ParseCssLengthMm(box.Style.GetPropertyValue("text-indent"), containingBlock.Width);
+        var firstLineMaxWidth = Math.Max(0, maxWidth - textIndentMm);
+
         var lines = new List<List<InlineItem>>();
         var currentLine = new List<InlineItem>();
         float currentLineWidth = 0;
 
         foreach (var item in items)
         {
+            var currentLineMaxWidth = lines.Count == 0 ? firstLineMaxWidth : maxWidth;
+
             if (item.Kind == InlineItemKind.ForcedBreak)
             {
                 lines.Add(currentLine);
@@ -294,7 +302,7 @@ public sealed class BlockPlacer
             }
 
             var neededWidth = item.WidthMm + (currentLine.Count > 0 ? spaceWidthMm : 0);
-            if (currentLine.Count > 0 && currentLineWidth + neededWidth > maxWidth)
+            if (currentLine.Count > 0 && currentLineWidth + neededWidth > currentLineMaxWidth)
             {
                 lines.Add(currentLine);
                 currentLine = new List<InlineItem>();
@@ -322,19 +330,22 @@ public sealed class BlockPlacer
                 ? line.Max(i => i.Kind == InlineItemKind.Image ? ImageHeightMm(i.ImageSource!) : ResolveLineHeightMm(i.Style))
                 : (items.Count > 0 ? ResolveLineHeightMm(items[0].Style) : 0);
 
+            bool isFirstLine = lineIndex == 0;
+            float lineMaxWidth = isFirstLine ? firstLineMaxWidth : maxWidth;
+
             // Natural (left-aligned) width of this line: sum of item widths plus
             // one space gap between each pair of items.
             float naturalWidth = line.Count > 0
                 ? line.Sum(i => i.WidthMm) + spaceWidthMm * (line.Count - 1)
                 : 0;
-            float extraSpace = Math.Max(0, maxWidth - naturalWidth);
+            float extraSpace = Math.Max(0, lineMaxWidth - naturalWidth);
 
             // CSS 2.1 16.2: "justify" stretches inter-word space, but the LAST
             // line of a justified block is left-aligned, not stretched, so it
             // doesn't look like the last line is straining to fill the width.
             bool justifyThisLine = textAlign == "justify" && !isLastLine && line.Count > 1;
 
-            float lineStartX = contentLeft;
+            float lineStartX = contentLeft + (isFirstLine ? textIndentMm : 0);
             float effectiveSpaceWidth = spaceWidthMm;
             if (justifyThisLine)
             {
@@ -451,7 +462,7 @@ public sealed class BlockPlacer
 
         float widthPt = 0;
         foreach (var ch in word)
-            widthPt += metrics.AdvanceWidths.TryGetValue(ch, out var w) ? w : metrics.AdvanceWidths.GetValueOrDefault('n', 6f);
+            widthPt += metrics.AdvanceWidths.TryGetValue(ch, out var w) ? w : metrics.SizePoints * 0.5f;
 
         return widthPt * PtToMm;
     }

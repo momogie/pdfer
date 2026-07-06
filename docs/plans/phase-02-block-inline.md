@@ -82,7 +82,15 @@ tak ada line box sungguhan.
       terakhir tidak di-justify sesuai CSS 2.1 §16.2) & centering/right — diverifikasi
       lewat 5 unit test (`Place_TextAlignLeft/Right/Center/Justify_*`) + harness
       fidelity (kombinasi center/right/justify dalam satu dokumen → **SSIM 0.9997**
-      vs Chromium). **`text-indent`** belum dikerjakan.
+      vs Chromium).
+- [x] **`text-indent`** (CSS 2.1 §16.1) — hanya menggeser baris pertama (positif
+      atau negatif untuk outdent), dan lebar yang tersedia untuk keputusan wrap baris
+      pertama juga dikurangi indent tersebut (bukan cuma pergeseran visual). 4 unit
+      test (`Place_TextIndent_ShiftsFirstLineOnly`, `Place_NoTextIndent_*`,
+      `Place_NegativeTextIndent_*`). **Catatan**: fidelity harness untuk item ini
+      belum dijalankan pada sesi ini karena `PdfWriter`/`PdfBlockContentWriter` sedang
+      ada perubahan lain yang belum stabil (lihat progres di bawah) — verifikasi SSIM
+      menyusul begitu file itu selesai.
 - [ ] **`text-transform`, `text-decoration`** — belum dikerjakan di box-tree pipeline
       (streaming pipeline sudah punya sebagian via tag handler `UnderlineHandler` dll,
       tapi itu tidak dipakai jalur box-tree).
@@ -101,7 +109,7 @@ tak ada line box sungguhan.
 - Paragraf multi-baris membungkus di titik yang sama dengan Chrome (untuk font yang sama).
   ✅ diverifikasi (SSIM 0.9998 pada kasus wrap paksa).
 
-## Progres nyata (4 sesi)
+## Progres nyata (5 sesi)
 
 **Sesi 1**: `box-sizing` (content-box/border-box) dan `text-align` (left/right/center/
 justify) ditambahkan ke `BlockPlacer`. Keduanya diverifikasi dobel: unit test dengan
@@ -142,6 +150,18 @@ harness fidelity utama Fase 0 (streaming) **identik**, harness eksploratif box-t
 (paragraf `line-height:2` dan `line-height:20px`) → **SSIM 0.9998** vs Chromium.
 Build solution penuh tanpa error.
 
+**Sesi 5**: `text-indent` — hanya menggeser baris pertama IFC, ikut mengurangi lebar
+yang tersedia untuk keputusan wrap baris pertama (bukan cuma pergeseran visual X).
+4 test baru — 278/278 `PdfEr.Core.Tests` stabil 3x run. **Catatan proses**: sesi ini
+tumpang tindih dengan perubahan konkuren di luar scope saya pada
+`LayoutEngine.cs`/`IntrinsicSizeCalculator.cs`/`PdfBlockContentWriter.cs`/
+`PdfFontHelper.cs`/`PdfTextWriter.cs`/`PdfWriter.cs`/`TextLayoutEngine.cs` (integrasi
+font-metrics ke streaming pipeline) — file-file itu tidak disentuh dan sengaja
+dibiarkan uncommitted di working tree, jadi commit sesi ini **hanya** mencakup
+`BlockPlacer.cs` + test terkait `text-indent`. Harness fidelity untuk `text-indent`
+belum dijalankan karena bergantung pada `PdfWriter` yang sedang tidak stabil;
+menyusul di sesi berikutnya.
+
 **Belum dikerjakan**: vertical-align, inline-block sebagai atomic inline item
-sungguhan, white-space, text-indent, text-transform/text-decoration, overflow,
-margin collapsing parent/child. Fase 2 berlanjut, jauh dari selesai.
+sungguhan, white-space, text-transform/text-decoration, overflow, margin collapsing
+parent/child. Fase 2 berlanjut, jauh dari selesai.

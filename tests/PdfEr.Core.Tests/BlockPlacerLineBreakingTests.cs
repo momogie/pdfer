@@ -50,6 +50,16 @@ public class BlockPlacerLineBreakingTests
         return box;
     }
 
+    private static LayoutBox AnonymousBlockWithIndent(string textIndent, params LayoutBox[] children)
+    {
+        var decl = new CssDeclarationBlock();
+        decl.SetProperty("text-indent", textIndent);
+        var box = new LayoutBox { Kind = LayoutBoxKind.Anonymous, IsAnonymous = true, Style = ComputedStyle.Resolve(decl) };
+        foreach (var child in children)
+            box.AddChild(child);
+        return box;
+    }
+
     private static List<LayoutBox> TextLinesOf(LayoutBox box) =>
         box.Children.Where(c => c.Kind == LayoutBoxKind.Text).ToList();
 
@@ -237,6 +247,54 @@ public class BlockPlacerLineBreakingTests
             var rightEdge = lastItem.Geometry.X + lastItem.Geometry.Width;
             Assert.Equal(15, rightEdge, 1); // justified line's last word ends at the content edge
         }
+    }
+
+    [Fact]
+    public void Place_TextIndent_ShiftsFirstLineOnly()
+    {
+        var registry = FakeRegistryWithFixedAdvance(5f);
+        var placer = new BlockPlacer(registry);
+        // Force a wrap so there's a second line whose start X we can compare
+        // against the (indented) first line.
+        var box = AnonymousBlockWithIndent("10mm", TextBox("alpha bravo charlie delta echo"));
+
+        placer.Place(box, new ContainingBlock(15, 0, false), 0, 0);
+
+        var lines = TextLinesOf(box);
+        var lineGroups = lines.GroupBy(l => l.Geometry.Y).OrderBy(g => g.Key).ToList();
+        Assert.True(lineGroups.Count >= 2, "Expected wrapping to produce a second line to compare against");
+
+        var firstLineFirstItem = lineGroups[0].OrderBy(l => l.Geometry.X).First();
+        var secondLineFirstItem = lineGroups[1].OrderBy(l => l.Geometry.X).First();
+
+        Assert.Equal(10, firstLineFirstItem.Geometry.X, 2); // shifted by text-indent
+        Assert.Equal(0, secondLineFirstItem.Geometry.X, 2); // not shifted
+    }
+
+    [Fact]
+    public void Place_NoTextIndent_FirstLineNotShifted()
+    {
+        var registry = FakeRegistryWithFixedAdvance(5f);
+        var placer = new BlockPlacer(registry);
+        var box = AnonymousBlock(TextBox("hi"));
+
+        placer.Place(box, new ContainingBlock(100, 0, false), 0, 0);
+
+        var line = TextLinesOf(box).Single();
+        Assert.Equal(0, line.Geometry.X, 3);
+    }
+
+    [Fact]
+    public void Place_NegativeTextIndent_OutdentsFirstLine()
+    {
+        var registry = FakeRegistryWithFixedAdvance(5f);
+        var placer = new BlockPlacer(registry);
+        var box = AnonymousBlockWithIndent("-5mm", TextBox("hi"));
+
+        placer.Place(box, new ContainingBlock(100, 0, false), 10, 0);
+
+        var line = TextLinesOf(box).Single();
+        Assert.Equal(5, line.Geometry.X, 2); // 10 (start x) - 5mm indent
     }
 
     [Fact]
