@@ -14,8 +14,12 @@ namespace PdfEr.Core.Application.HtmlProcessing;
 /// stack vertically.
 ///
 /// Deliberately NOT implemented in this slice (separate, larger pieces of work):
-/// - Margin collapsing (CSS 2.1 8.3.1) — margins here are simply additive space
-///   between boxes, not collapsed between adjacent siblings or parent/first-child.
+/// - Margin collapsing (CSS 2.1 8.3.1) between ADJACENT SIBLINGS is implemented
+///   (see CollapseMargins) — but parent/first-child, parent/last-child, and
+///   empty-block self-collapsing are not: those need border/padding context to
+///   flow across recursion levels (a child needs to know whether its parent has
+///   top border/padding to decide if their margins collapse), which is a larger
+///   change to the recursive structure than this slice makes.
 /// - Inline Formatting Context / line boxes — an Inline/Text/Anonymous child is
 ///   given a single placeholder line box using FontSizeMm * a fixed line-height
 ///   factor, not real line-breaking (that's Phase 2/3 work). Anonymous blocks
@@ -57,17 +61,37 @@ public sealed class BlockPlacer
         }
         else
         {
+            float? previousMarginBottom = null;
+
             foreach (var child in box.Children)
             {
                 // Margin-top must be known before placing the child (it offsets
                 // where the child's border box starts), so it's parsed here
                 // rather than only inside the recursive Place call.
                 var marginTop = ParseLengthMm(child.Style.GetPropertyValue("margin-top"));
-                cursorY += marginTop;
+
+                // CSS 2.1 8.3.1 adjacent-sibling collapsing: this child's margin-top
+                // and the previous sibling's margin-bottom collapse into a single
+                // margin rather than adding. Only applies between siblings in the
+                // same block formatting context — the first child has no previous
+                // sibling to collapse with, so its margin-top applies in full here
+                // (parent/first-child collapsing is a separate, not-yet-implemented
+                // case; see class remarks).
+                if (previousMarginBottom.HasValue)
+                {
+                    cursorY -= previousMarginBottom.Value; // undo the uncollapsed margin already added
+                    cursorY += CollapseMargins(previousMarginBottom.Value, marginTop);
+                }
+                else
+                {
+                    cursorY += marginTop;
+                }
 
                 Place(child, childContainingBlock, contentLeft, cursorY);
 
-                cursorY += child.Geometry.Height + child.Geometry.MarginBottom;
+                cursorY += child.Geometry.Height;
+                previousMarginBottom = child.Geometry.MarginBottom;
+                cursorY += child.Geometry.MarginBottom;
             }
             geometry.Height = cursorY - contentTop;
         }
@@ -77,6 +101,20 @@ public sealed class BlockPlacer
             geometry.Height = explicitHeight.Value;
 
         box.Geometry = geometry;
+    }
+
+    /// <summary>
+    /// CSS 2.1 8.3.1 general collapsing formula: when all collapsing margins are
+    /// non-negative, the result is their max; when negative margins are
+    /// involved, take the max of the positives and add the min (most negative)
+    /// of the negatives. With exactly two margins this reduces to the common
+    /// cases (both positive -> max, both negative -> min, mixed -> sum).
+    /// </summary>
+    private static float CollapseMargins(float a, float b)
+    {
+        var maxPositive = Math.Max(Math.Max(a, 0), Math.Max(b, 0));
+        var minNegative = Math.Min(Math.Min(a, 0), Math.Min(b, 0));
+        return maxPositive + minNegative;
     }
 
     private static float ResolveWidth(LayoutBox box, ContainingBlock containingBlock, BoxGeometry geometry)

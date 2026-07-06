@@ -89,6 +89,90 @@ public class BlockPlacerTests
     }
 
     [Fact]
+    public void Place_AdjacentSiblingMargins_BothPositive_CollapseToMax()
+    {
+        var decl1 = new CssDeclarationBlock();
+        decl1.SetProperty("height", "10mm");
+        decl1.SetProperty("margin-bottom", "8mm");
+        var decl2 = new CssDeclarationBlock();
+        decl2.SetProperty("height", "5mm");
+        decl2.SetProperty("margin-top", "5mm");
+
+        var child1 = Block(decl1);
+        var child2 = Block(decl2);
+        var root = Block(null, child1, child2);
+
+        var placer = new BlockPlacer();
+        placer.Place(root, new ContainingBlock(100, 0, false), 0, 0);
+
+        // Collapsed gap = max(8, 5) = 8mm, not 8 + 5 = 13mm.
+        Assert.Equal(10, child1.Geometry.Height);
+        Assert.Equal(18, child2.Geometry.Y); // 10 (child1 height) + 8 (collapsed margin)
+        Assert.Equal(23, root.Geometry.Height); // 10 + 8 + 5, no trailing margin included
+    }
+
+    [Fact]
+    public void Place_AdjacentSiblingMargins_BothNegative_CollapseToMin()
+    {
+        var decl1 = new CssDeclarationBlock();
+        decl1.SetProperty("height", "10mm");
+        decl1.SetProperty("margin-bottom", "-3mm");
+        var decl2 = new CssDeclarationBlock();
+        decl2.SetProperty("height", "5mm");
+        decl2.SetProperty("margin-top", "-6mm");
+
+        var child1 = Block(decl1);
+        var child2 = Block(decl2);
+        var root = Block(null, child1, child2);
+
+        var placer = new BlockPlacer();
+        placer.Place(root, new ContainingBlock(100, 0, false), 0, 0);
+
+        // Collapsed gap = min(-3, -6) = -6mm (children overlap by 6mm).
+        Assert.Equal(4, child2.Geometry.Y); // 10 + (-6)
+    }
+
+    [Fact]
+    public void Place_AdjacentSiblingMargins_MixedSign_SumsPositiveAndNegative()
+    {
+        var decl1 = new CssDeclarationBlock();
+        decl1.SetProperty("height", "10mm");
+        decl1.SetProperty("margin-bottom", "8mm");
+        var decl2 = new CssDeclarationBlock();
+        decl2.SetProperty("height", "5mm");
+        decl2.SetProperty("margin-top", "-3mm");
+
+        var child1 = Block(decl1);
+        var child2 = Block(decl2);
+        var root = Block(null, child1, child2);
+
+        var placer = new BlockPlacer();
+        placer.Place(root, new ContainingBlock(100, 0, false), 0, 0);
+
+        // Collapsed gap = max(8, 0) + min(0, -3) = 8 + (-3) = 5mm.
+        Assert.Equal(15, child2.Geometry.Y); // 10 + 5
+    }
+
+    [Fact]
+    public void Place_FirstChildMarginTop_DoesNotCollapseWithParent_AppliesInFull()
+    {
+        // Parent/first-child collapsing (CSS 2.1 8.3.1) is explicitly out of
+        // scope for this slice — the first child's margin-top should apply
+        // in full relative to the parent's content box, not collapse away.
+        var decl = new CssDeclarationBlock();
+        decl.SetProperty("margin-top", "12mm");
+        decl.SetProperty("height", "5mm");
+
+        var child = Block(decl);
+        var root = Block(null, child);
+
+        var placer = new BlockPlacer();
+        placer.Place(root, new ContainingBlock(100, 0, false), 0, 0);
+
+        Assert.Equal(12, child.Geometry.Y);
+    }
+
+    [Fact]
     public void Place_ExplicitWidthInMm_OverridesContainingBlockFill()
     {
         var decl = new CssDeclarationBlock();
