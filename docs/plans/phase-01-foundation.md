@@ -77,9 +77,23 @@ Konsep first-class yang diperkenalkan (mengganti kursor global):
       bukan jalur utama. **Belum dikonsumsi** LayoutEngine sama sekali — tebakan
       `textLen * fontSize * 0.5f` di LayoutEngine.cs masih jalan apa adanya sampai
       Pass 2 (placement) menggantikan pemanggil-pemanggilnya.
-- [ ] **Pass 2 — placement**: tipe `BoxGeometry` sudah ada, **belum ada placement pass**.
+- [~] **Pass 2 — placement (slice 1/N: plain Block Formatting Context)**:
+      `BlockPlacer` di
+      [BlockPlacer.cs](../../src/PdfEr.Core/Application/HtmlProcessing/BlockPlacer.cs)
+      menempatkan box top-down: width mengisi containing block (atau resolve
+      `width`/`%`/shrink-to-fit untuk inline-block dari `Intrinsic.MaxContentWidth`),
+      height dari isi (atau `height` eksplisit, `%` hanya diresolusi kalau containing
+      block punya `HeightIsDefinite=true` sesuai CSS 2.1 §10.5), children block
+      ditumpuk vertikal. **Sengaja belum**: margin collapsing (CSS 2.1 §8.3.1 — slice
+      terpisah berikutnya, margin sekarang murni aditif antar box, bukan collapse
+      parent/child atau adjacent-sibling), Inline Formatting Context sungguhan (Text/
+      Inline/Anonymous masih pakai satu "placeholder line box" `FontSizeMm * 1.3f`,
+      sama seperti auto line-height streaming pipeline — bukan real line-breaking),
+      serta placement khusus float/position/table/flex/grid (semua `LayoutBoxKind`
+      selain Block/Text/InlineBlock diperlakukan seperti block biasa untuk saat ini).
       `fontSize * 1.3f` di [LayoutEngine.cs:366-367](../../src/PdfEr.Core/Application/HtmlProcessing/LayoutEngine.cs#L366-L367)
-      masih jalan seperti sebelumnya.
+      (pipeline streaming) masih jalan terpisah seperti sebelumnya — `BlockPlacer`
+      belum dipanggil dari mana pun di luar unit test.
 - [x] Objek **ContainingBlock** (struct, `Width`/`Height`/`HeightIsDefinite`) dan enum
       **FormattingContextKind** (Block/Inline/Flex/Grid/Table) sebagai penanda — keduanya
       tipe data saja, **belum dipakai** untuk resolusi `%` atau pemisahan BFC/IFC nyata.
@@ -95,7 +109,7 @@ Konsep first-class yang diperkenalkan (mengganti kursor global):
       coupling dua arah antar proyek Domain/Application saat ini — perlu disatukan saat
       `IUnitConverter` dibereskan.
 
-## Progres nyata (2 sesi — bukan Fase 1 selesai, lihat status per item di atas)
+## Progres nyata (4 sesi — bukan Fase 1 selesai, lihat status per item di atas)
 
 **Sesi 1**: tipe data box-tree tambahan (`LayoutBox`, `ComputedStyle`, dll.), tanpa
 mengubah pipeline streaming. Ditemukan & diperbaiki bug race-condition di `CssMerger`
@@ -119,11 +133,22 @@ tipe+kalkulator baru dikonsumsi lewat unit test langsung), jadi verifikasi cukup
 dihitung tangan dengan advance width tetap 5pt/karakter) stabil 3x run, plus 54
 Infrastructure + 46 Integration tetap hijau. Build solution penuh tanpa error.
 
-**Belum dikerjakan (sengaja, untuk sesi terpisah)**: Pass 2 (placement — ini yang
-sebenarnya menghasilkan `BoxGeometry`/X,Y/lebar-tinggi final), migrasi tag handler,
-adapter paint, anonymous-wrapping untuk table/flex/grid container. Fase 1 tetap XL;
-tiga slice ini baru tipe data + pohon box + lebar intrinsik — **belum ada satu pun
-kotak yang benar-benar ditempatkan** (X/Y/Height tetap default/kosong di `BoxGeometry`).
+**Sesi 4**: `BlockPlacer` — Pass 2 slice pertama (plain Block Formatting Context saja,
+tanpa margin collapsing/IFC sungguhan/float/position/table/flex/grid — lihat catatan
+di item checklist). Ini pertama kalinya `BoxGeometry` diisi angka X/Y/Width/Height
+nyata, bukan default kosong. Tidak menyentuh `LayoutEngine`/`PdfConverterService`;
+diverifikasi lewat 199/199 `PdfEr.Core.Tests` (12 test baru `BlockPlacerTests`: stacking
+vertikal, width fill vs eksplisit vs `%`, height `%` dengan containing block
+definite/indefinite per CSS 2.1 §10.5, padding/border offset, shrink-to-fit
+inline-block) stabil 3x run, 54 Infrastructure + 46 Integration tetap hijau, build
+solution penuh tanpa error.
+
+**Belum dikerjakan (sengaja, untuk sesi terpisah)**: margin collapsing (§8.3.1), Inline
+Formatting Context sungguhan (line box asli, bukan placeholder satu-baris), placement
+khusus untuk float/position/table/flex/grid, migrasi tag handler, adapter paint box-tree
+→ `BlockBox`/`InlineBox` lama. Fase 1 tetap XL; empat slice sejauh ini baru menghasilkan
+geometri untuk kasus block-formatting-context paling sederhana — belum ada jalur yang
+menyambungkan box-tree pipeline ke PDF output sama sekali.
 
 ## Migrasi tag handler
 
